@@ -13,10 +13,14 @@ class Settings(BaseSettings):
     # Storage for raw flyer files
     storage_dir: str = "./storage"
 
-    # Inbound email ingestion. Shared inbox provider (e.g. SendGrid Inbound
-    # Parse / Postmark) posts to /ingest/email with this shared secret so we
-    # can trust the sender field it reports.
-    inbound_email_domain: str = "deals.dealarchive.app"
+    # Inbound email ingestion (Postmark inbound webhook -> /ingest/email).
+    # Postmark's default inbound address is one shared address per account
+    # (e.g. "5ed2f034e21b10846839e79ad6e59775@inbound.postmarkapp.com"), not
+    # one per user, so per-broker routing rides on Postmark's "+" mailbox
+    # hash: a broker's real forwarding address is
+    # "<local>+<forwarding_slug>@<domain>", and Postmark parses the part
+    # after "+" into ToFull[0].MailboxHash on the webhook payload.
+    inbound_base_address: str | None = None  # e.g. "5ed2f034e21b10846839e79ad6e59775@inbound.postmarkapp.com"
     inbound_webhook_secret: str | None = None
 
     frontend_url: str = "http://localhost:3000"
