@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import dataclass, field
 
 import anthropic
@@ -70,6 +71,13 @@ class ExtractionResult:
     low_confidence_fields: list[str] = field(default_factory=list)
 
 
+def _strip_markdown_fence(text: str) -> str:
+    """Claude sometimes wraps its JSON in a ```json ... ``` fence despite
+    being told not to; unwrap it if present."""
+    match = re.search(r"```(?:json)?\s*\n(.*)\n```", text, re.DOTALL)
+    return match.group(1) if match else text
+
+
 def _media_type_for(filename: str, content_type: str | None) -> str:
     if content_type in _IMAGE_MEDIA_TYPES.values():
         return content_type
@@ -106,7 +114,7 @@ def extract_flyer(content: bytes, filename: str, content_type: str | None) -> Ex
     )
 
     raw_text = "".join(block.text for block in response.content if block.type == "text")
-    data = json.loads(raw_text)
+    data = json.loads(_strip_markdown_fence(raw_text))
 
     deal_type = data.get("deal_type")
     if deal_type not in ("sale", "lease"):

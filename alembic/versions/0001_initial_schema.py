@@ -7,6 +7,7 @@ Create Date: 2026-08-16
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 
 # revision identifiers, used by Alembic.
 revision = "0001"
@@ -14,24 +15,60 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-deal_type = sa.Enum("sale", "lease", name="dealtype")
-property_type = sa.Enum(
-    "office", "industrial", "retail", "land", "multifamily", "other", name="propertytype"
+# create_type=False is only honored by the dialect-specific postgresql.ENUM
+# -- the generic sa.Enum silently drops it (it has no such attribute), which
+# is why a first pass at this migration using sa.Enum kept re-issuing
+# CREATE TYPE from op.create_table's DDL events even after being told not
+# to. Types are created explicitly by _create_enum_idempotent below via a
+# raw DO block rather than Enum.create(checkfirst=True), since checkfirst's
+# existence check was unreliable against Neon within a single migration run.
+deal_type = PG_ENUM("sale", "lease", name="dealtype", create_type=False)
+property_type = PG_ENUM(
+    "office",
+    "industrial",
+    "retail",
+    "land",
+    "multifamily",
+    "other",
+    name="propertytype",
+    create_type=False,
 )
-rate_type = sa.Enum("per_sf_year", "per_sf_month", "flat_month", name="ratetype")
-expense_type = sa.Enum("nnn", "gross", "modified_gross", "unknown", name="expensetype")
-extraction_status = sa.Enum(
-    "pending", "parsed", "needs_review", "failed", name="extractionstatus"
+rate_type = PG_ENUM(
+    "per_sf_year", "per_sf_month", "flat_month", name="ratetype", create_type=False
 )
+expense_type = PG_ENUM(
+    "nnn", "gross", "modified_gross", "unknown", name="expensetype", create_type=False
+)
+extraction_status = PG_ENUM(
+    "pending", "parsed", "needs_review", "failed", name="extractionstatus", create_type=False
+)
+
+
+def _create_enum_idempotent(enum_type: PG_ENUM) -> None:
+    """CREATE TYPE, tolerating a concurrent/already-existing type.
+
+    Using Enum.create(checkfirst=True) here was unreliable against Neon
+    (checkfirst's existence check didn't consistently see state from
+    earlier in the same migration run), so this does the check-and-create
+    atomically in Postgres itself instead.
+    """
+    labels = ", ".join(f"'{v}'" for v in enum_type.enums)
+    op.execute(
+        f"""
+        DO $$ BEGIN
+            CREATE TYPE {enum_type.name} AS ENUM ({labels});
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
+    )
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    deal_type.create(bind, checkfirst=True)
-    property_type.create(bind, checkfirst=True)
-    rate_type.create(bind, checkfirst=True)
-    expense_type.create(bind, checkfirst=True)
-    extraction_status.create(bind, checkfirst=True)
+    _create_enum_idempotent(deal_type)
+    _create_enum_idempotent(property_type)
+    _create_enum_idempotent(rate_type)
+    _create_enum_idempotent(expense_type)
+    _create_enum_idempotent(extraction_status)
 
     op.create_table(
         "users",
@@ -119,9 +156,5 @@ def downgrade() -> None:
     op.drop_table("flyers")
     op.drop_table("users")
 
-    bind = op.get_bind()
-    extraction_status.drop(bind, checkfirst=True)
-    expense_type.drop(bind, checkfirst=True)
-    rate_type.drop(bind, checkfirst=True)
-    property_type.drop(bind, checkfirst=True)
-    deal_type.drop(bind, checkfirst=True)
+    for enum_name in ("extractionstatus", "expensetype", "ratetype", "propertytype", "dealtype"):
+        op.execute(f"DROP TYPE IF EXISTS {enum_name}")
