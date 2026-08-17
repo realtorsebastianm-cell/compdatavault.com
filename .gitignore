@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+storage/
+dealarchive.egg-info/
+web/node_modules/
+web/.next/
+web/.env.local
