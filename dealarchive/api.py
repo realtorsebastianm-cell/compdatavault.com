@@ -4,10 +4,11 @@ Run locally: uvicorn dealarchive.api:app --reload
 """
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -39,6 +40,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 # --------------------------------------------------------------------------
@@ -219,22 +225,43 @@ async def upload_flyer(file: UploadFile = File(...), user: User = Depends(get_cu
         )
 
 
-@app.post("/ingest/email", response_model=FlyerResult)
-async def ingest_email(
-    to: str = Form(...),
-    sender: str = Form(...),
-    file: UploadFile = File(...),
-    webhook_secret: str | None = Form(default=None),
-):
-    """Webhook target for an inbound-email provider (e.g. SendGrid Inbound
-    Parse, Postmark). The provider posts the recipient, sender, and the
-    flyer attachment here after receiving mail at deals@<domain>.
+@app.post("/ingest/email", response_model=list[FlyerResult])
+async def ingest_email(request: Request, secret: str | None = Query(default=None)):
+    """Webhook target for SendGrid's Inbound Parse.
+
+    SendGrid POSTs multipart/form-data with the parsed envelope as a JSON
+    string in the `envelope` field (more reliable than the raw `to`/`from`
+    header fields, which can carry a display name), plus one file part per
+    attachment named attachment1, attachment2, etc., with a matching
+    `attachments` count field. See:
+    https://www.twilio.com/docs/sendgrid/for-developers/parsing-email/setting-up-the-inbound-parse-webhook
+
+    Inbound Parse has no header/signature auth of its own, so the webhook
+    URL configured in SendGrid's dashboard should include ?secret=... and
+    that's checked against INBOUND_WEBHOOK_SECRET here.
     """
-    if settings.inbound_webhook_secret and webhook_secret != settings.inbound_webhook_secret:
+    if settings.inbound_webhook_secret and secret != settings.inbound_webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-    slug = to.split("@", 1)[0]
-    content = await file.read()
+    form = await request.form()
+
+    envelope_raw = form.get("envelope")
+    if not envelope_raw:
+        raise HTTPException(status_code=400, detail="Missing envelope field")
+    envelope = json.loads(envelope_raw)
+    recipients: list[str] = envelope.get("to") or []
+    sender: str = envelope.get("from") or form.get("from", "")
+
+    if not recipients:
+        raise HTTPException(status_code=400, detail="Envelope has no recipients")
+    slug = recipients[0].split("@", 1)[0]
+
+    attachment_count = int(form.get("attachments", 0) or 0)
+    attachments = [
+        form[f"attachment{i}"] for i in range(1, attachment_count + 1) if f"attachment{i}" in form
+    ]
+    if not attachments:
+        raise HTTPException(status_code=400, detail="No attachments on this email")
 
     with SessionLocal() as session:
         user = session.scalar(select(User).where(User.forwarding_slug == slug))
@@ -242,9 +269,22 @@ async def ingest_email(
             # No matching account -- the provider-side auto-reply ("sign up
             # first") is triggered off this 404, not sent from here.
             raise HTTPException(status_code=404, detail="No account matches this forwarding address")
-        return _process_flyer(
-            session, user, content, file.filename or "flyer", file.content_type or "", "email", sender
-        )
+
+        results = []
+        for attachment in attachments:
+            content = await attachment.read()
+            results.append(
+                _process_flyer(
+                    session,
+                    user,
+                    content,
+                    attachment.filename or "flyer",
+                    attachment.content_type or "",
+                    "email",
+                    sender,
+                )
+            )
+        return results
 
 
 # --------------------------------------------------------------------------
