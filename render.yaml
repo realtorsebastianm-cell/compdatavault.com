@@ -18,7 +18,7 @@ services:
         sync: false
       - key: STORAGE_DIR
         value: /opt/render/project/storage
-      - key: INBOUND_BASE_ADDRESS
+      - key: INBOUND_EMAIL_DOMAIN
         sync: false
       - key: INBOUND_WEBHOOK_SECRET
         sync: false

@@ -4,7 +4,7 @@ Run locally: uvicorn dealarchive.api:app --reload
 """
 from __future__ import annotations
 
-import base64
+import json
 from datetime import date
 from typing import Literal
 
@@ -88,18 +88,11 @@ class MeResponse(BaseModel):
     forwarding_address: str
 
 
-def _forwarding_address(forwarding_slug: str) -> str | None:
-    if not settings.inbound_base_address or "@" not in settings.inbound_base_address:
-        return None
-    local, domain = settings.inbound_base_address.split("@", 1)
-    return f"{local}+{forwarding_slug}@{domain}"
-
-
 @app.get("/me", response_model=MeResponse)
 def me(user: User = Depends(get_current_user)):
     return MeResponse(
         email=user.email,
-        forwarding_address=_forwarding_address(user.forwarding_slug) or "(inbound email not configured yet)",
+        forwarding_address=f"{user.forwarding_slug}@{settings.inbound_email_domain}",
     )
 
 
@@ -234,68 +227,64 @@ async def upload_flyer(file: UploadFile = File(...), user: User = Depends(get_cu
 
 @app.post("/ingest/email", response_model=list[FlyerResult])
 async def ingest_email(request: Request, secret: str | None = Query(default=None)):
-    """Webhook target for Postmark's inbound email processing.
+    """Webhook target for SendGrid's Inbound Parse.
 
-    Postmark POSTs a single JSON body (not multipart/form-data) shaped like:
+    SendGrid POSTs multipart/form-data with the parsed envelope as a JSON
+    string in the `envelope` field (more reliable than the raw `to`/`from`
+    header fields, which can carry a display name), plus one file part per
+    attachment named attachment1, attachment2, etc., with a matching
+    `attachments` count field. See:
+    https://www.twilio.com/docs/sendgrid/for-developers/parsing-email/setting-up-the-inbound-parse-webhook
 
-        {
-          "From": "broker@brokerage.com",
-          "To": "5ed2f034...@inbound.postmarkapp.com",
-          "ToFull": [{"Email": "...", "MailboxHash": "<forwarding_slug>"}],
-          "Attachments": [
-            {"Name": "flyer.pdf", "Content": "<base64>", "ContentType": "application/pdf"}
-          ],
-          ...
-        }
+    Each broker's forwarding address is <forwarding_slug>@INBOUND_EMAIL_DOMAIN
+    -- unlike Postmark, SendGrid Inbound Parse is set up per custom domain
+    (via an MX record), so every address on that domain routes here directly,
+    no shared-mailbox "+" convention needed.
 
-    See: https://postmarkapp.com/developer/webhooks/inbound-webhook
-
-    Everyone on this Postmark account shares one inbound address, so a
-    broker's forwarding address uses Postmark's "+" mailbox-hash convention
-    (<local>+<forwarding_slug>@<domain>) to route to the right user --
-    Postmark parses the part after "+" into ToFull[0].MailboxHash for us.
-
-    Postmark's inbound webhook has no built-in signing, so the URL
-    configured in its dashboard should include ?secret=..., checked here
-    against INBOUND_WEBHOOK_SECRET.
+    Inbound Parse has no header/signature auth of its own, so the webhook
+    URL configured in SendGrid's dashboard should include ?secret=... and
+    that's checked against INBOUND_WEBHOOK_SECRET here.
     """
     if settings.inbound_webhook_secret and secret != settings.inbound_webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-    payload = await request.json()
+    form = await request.form()
 
-    to_full = payload.get("ToFull") or []
-    mailbox_hash = to_full[0].get("MailboxHash") if to_full else None
-    if not mailbox_hash:
-        raise HTTPException(
-            status_code=400,
-            detail="No mailbox hash on the recipient address (expected <local>+<slug>@<domain>)",
-        )
-    slug = mailbox_hash
-    sender = payload.get("From") or ""
+    envelope_raw = form.get("envelope")
+    if not envelope_raw:
+        raise HTTPException(status_code=400, detail="Missing envelope field")
+    envelope = json.loads(envelope_raw)
+    recipients: list[str] = envelope.get("to") or []
+    sender: str = envelope.get("from") or form.get("from", "")
 
-    raw_attachments = payload.get("Attachments") or []
-    if not raw_attachments:
+    if not recipients:
+        raise HTTPException(status_code=400, detail="Envelope has no recipients")
+    slug = recipients[0].split("@", 1)[0]
+
+    attachment_count = int(form.get("attachments", 0) or 0)
+    attachments = [
+        form[f"attachment{i}"] for i in range(1, attachment_count + 1) if f"attachment{i}" in form
+    ]
+    if not attachments:
         raise HTTPException(status_code=400, detail="No attachments on this email")
 
     with SessionLocal() as session:
         user = session.scalar(select(User).where(User.forwarding_slug == slug))
         if user is None:
-            # No matching account -- Postmark doesn't auto-reply on our
-            # behalf, so a "sign up first" bounce would need to be sent
-            # from here explicitly if that's wanted later.
+            # No matching account -- the provider-side auto-reply ("sign up
+            # first") is triggered off this 404, not sent from here.
             raise HTTPException(status_code=404, detail="No account matches this forwarding address")
 
         results = []
-        for attachment in raw_attachments:
-            content = base64.b64decode(attachment["Content"])
+        for attachment in attachments:
+            content = await attachment.read()
             results.append(
                 _process_flyer(
                     session,
                     user,
                     content,
-                    attachment.get("Name") or "flyer",
-                    attachment.get("ContentType") or "",
+                    attachment.filename or "flyer",
+                    attachment.content_type or "",
                     "email",
                     sender,
                 )
