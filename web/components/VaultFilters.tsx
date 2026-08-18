@@ -39,38 +39,41 @@ export default function VaultFilters({
     onChange({ ...filters, [key]: value });
   }
 
+  const inputClass =
+    "border border-line bg-transparent px-2 py-1.5 text-sm text-foreground focus:border-accent focus:outline-none";
+
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <label className="flex flex-col gap-1 text-xs text-black/60 dark:text-white/60">
-        Address
+      <label className="flex flex-col gap-1 text-xs text-dim">
+        address
         <input
           value={filters.q}
           onChange={(e) => set("q", e.target.value)}
-          placeholder="Search address"
-          className="rounded-md border border-black/15 px-2 py-1.5 text-sm dark:border-white/20 dark:bg-transparent"
+          placeholder="search"
+          className={inputClass}
         />
       </label>
 
-      <label className="flex flex-col gap-1 text-xs text-black/60 dark:text-white/60">
-        Submarket
+      <label className="flex flex-col gap-1 text-xs text-dim">
+        submarket
         <input
           value={filters.submarket}
           onChange={(e) => set("submarket", e.target.value)}
-          placeholder="Any"
-          className="rounded-md border border-black/15 px-2 py-1.5 text-sm dark:border-white/20 dark:bg-transparent"
+          placeholder="any"
+          className={inputClass}
         />
       </label>
 
-      <label className="flex flex-col gap-1 text-xs text-black/60 dark:text-white/60">
-        Property type
+      <label className="flex flex-col gap-1 text-xs text-dim">
+        property_type
         <select
           value={filters.property_type}
           onChange={(e) =>
             set("property_type", e.target.value as PropertyType | "")
           }
-          className="rounded-md border border-black/15 px-2 py-1.5 text-sm dark:border-white/20 dark:bg-transparent"
+          className={inputClass}
         >
-          <option value="">Any</option>
+          <option value="">any</option>
           {PROPERTY_TYPES.map((pt) => (
             <option key={pt} value={pt}>
               {pt}
@@ -79,23 +82,23 @@ export default function VaultFilters({
         </select>
       </label>
 
-      <label className="flex flex-col gap-1 text-xs text-black/60 dark:text-white/60">
-        From
+      <label className="flex flex-col gap-1 text-xs text-dim">
+        from
         <input
           type="date"
           value={filters.date_from}
           onChange={(e) => set("date_from", e.target.value)}
-          className="rounded-md border border-black/15 px-2 py-1.5 text-sm dark:border-white/20 dark:bg-transparent"
+          className={inputClass}
         />
       </label>
 
-      <label className="flex flex-col gap-1 text-xs text-black/60 dark:text-white/60">
-        To
+      <label className="flex flex-col gap-1 text-xs text-dim">
+        to
         <input
           type="date"
           value={filters.date_to}
           onChange={(e) => set("date_to", e.target.value)}
-          className="rounded-md border border-black/15 px-2 py-1.5 text-sm dark:border-white/20 dark:bg-transparent"
+          className={inputClass}
         />
       </label>
 
@@ -106,9 +109,9 @@ export default function VaultFilters({
         filters.date_to) && (
         <button
           onClick={() => onChange(EMPTY_FILTERS)}
-          className="rounded-md px-2 py-1.5 text-xs text-black/60 hover:text-black dark:text-white/60 dark:hover:text-white"
+          className="px-2 py-1.5 text-xs text-dim hover:text-foreground"
         >
-          Clear
+          clear
         </button>
       )}
     </div>

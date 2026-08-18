@@ -2,18 +2,21 @@
 
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import Cursor from "@/components/Cursor";
 
 export default function LandingPage() {
   const { email, loading } = useAuth();
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col items-center px-6 py-24 text-center">
-      <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
+      <p className="text-sm text-dim">$ forward-a-flyer --get comps</p>
+      <h1 className="mt-3 text-3xl font-medium tracking-tight sm:text-4xl">
         Forward your flyers.
         <br />
         Get instant comps.
+        <Cursor className="ml-2" />
       </h1>
-      <p className="mt-6 max-w-xl text-lg text-black/60 dark:text-white/60">
+      <p className="mt-6 max-w-xl text-base text-dim">
         Deal Archive reads every sale and lease flyer that lands in your
         inbox and turns it into a searchable, personal comp database &mdash;
         built from deal flow you already see.
@@ -23,23 +26,23 @@ export default function LandingPage() {
         {!loading && email ? (
           <Link
             href="/sale"
-            className="rounded-md bg-orange-600 px-6 py-3 font-medium text-white hover:bg-orange-700"
+            className="border border-accent px-6 py-3 font-medium text-accent hover:bg-accent hover:text-background"
           >
-            Go to your vault
+            go_to_vault
           </Link>
         ) : (
           <>
             <Link
               href="/sign-up"
-              className="rounded-md bg-orange-600 px-6 py-3 font-medium text-white hover:bg-orange-700"
+              className="border border-accent bg-accent px-6 py-3 font-medium text-background hover:bg-transparent hover:text-accent"
             >
-              Get started
+              get_started
             </Link>
             <Link
               href="/sign-in"
-              className="rounded-md border border-black/15 px-6 py-3 font-medium hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+              className="border border-line px-6 py-3 font-medium text-foreground hover:border-dim"
             >
-              Sign in
+              sign_in
             </Link>
           </>
         )}
@@ -69,11 +72,11 @@ export default function LandingPage() {
 function Step({ n, title, body }: { n: string; title: string; body: string }) {
   return (
     <div>
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-600/10 text-sm font-semibold text-orange-600 dark:text-orange-400">
+      <div className="flex h-8 w-8 items-center justify-center border border-accent text-sm font-medium text-accent">
         {n}
       </div>
       <h3 className="mt-3 font-medium">{title}</h3>
-      <p className="mt-1 text-sm text-black/60 dark:text-white/60">{body}</p>
+      <p className="mt-1 text-sm text-dim">{body}</p>
     </div>
   );
 }

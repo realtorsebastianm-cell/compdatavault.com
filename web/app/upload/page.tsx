@@ -3,6 +3,7 @@
 import { useCallback, useState, type DragEvent } from "react";
 import Link from "next/link";
 import { api, type FlyerResult } from "@/lib/api";
+import Cursor from "@/components/Cursor";
 
 export default function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
@@ -34,8 +35,11 @@ export default function UploadPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-12">
-      <h1 className="text-2xl font-semibold">Upload a flyer</h1>
-      <p className="mt-2 text-sm text-black/60 dark:text-white/60">
+      <h1 className="flex items-center text-xl font-medium">
+        upload_flyer
+        <Cursor className="ml-2" />
+      </h1>
+      <p className="mt-2 text-sm text-dim">
         Drop a sale or lease flyer (PDF or image). We&rsquo;ll detect which
         one it is and file it into the right vault.
       </p>
@@ -47,17 +51,13 @@ export default function UploadPage() {
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`mt-6 flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-16 text-center transition-colors ${
-          dragOver
-            ? "border-orange-500 bg-orange-500/5"
-            : "border-black/15 dark:border-white/20"
+        className={`mt-6 flex flex-col items-center justify-center border-2 border-dashed px-6 py-16 text-center transition-colors ${
+          dragOver ? "border-accent bg-accent/5" : "border-line"
         }`}
       >
-        <p className="text-sm text-black/60 dark:text-white/60">
-          Drag and drop a flyer here, or
-        </p>
-        <label className="mt-3 cursor-pointer rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700">
-          Choose file
+        <p className="text-sm text-dim">Drag and drop a flyer here, or</p>
+        <label className="mt-3 cursor-pointer border border-accent bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-transparent hover:text-accent">
+          choose_file
           <input
             type="file"
             accept=".pdf,.png,.jpg,.jpeg,.webp"
@@ -67,13 +67,14 @@ export default function UploadPage() {
           />
         </label>
         {uploading && (
-          <p className="mt-4 text-sm text-black/60 dark:text-white/60">
-            Extracting&hellip;
+          <p className="mt-4 flex items-center text-sm text-dim">
+            extracting
+            <Cursor className="ml-2" />
           </p>
         )}
       </div>
 
-      {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
       {results.length > 0 && (
         <div className="mt-8 flex flex-col gap-4">
@@ -89,13 +90,9 @@ export default function UploadPage() {
 function ResultCard({ result }: { result: FlyerResult }) {
   if (result.status === "failed") {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900 dark:bg-red-950/30">
-        <p className="font-medium text-red-700 dark:text-red-400">
-          Extraction failed
-        </p>
-        <p className="mt-1 text-red-600/80 dark:text-red-400/70">
-          {result.error}
-        </p>
+      <div className="border border-red-900 bg-red-950/30 p-4 text-sm">
+        <p className="font-medium text-red-400">extraction_failed</p>
+        <p className="mt-1 text-red-400/70">{result.error}</p>
       </div>
     );
   }
@@ -106,28 +103,28 @@ function ResultCard({ result }: { result: FlyerResult }) {
       : undefined;
 
   return (
-    <div className="rounded-lg border border-black/10 p-4 text-sm dark:border-white/10">
+    <div className="border border-line p-4 text-sm">
       <div className="flex items-center justify-between">
         <p className="font-medium capitalize">
           {result.deal_type ?? "unknown"} flyer parsed
         </p>
         {href && (
-          <Link href={href} className="text-orange-600 hover:underline dark:text-orange-400">
-            View comp &rarr;
+          <Link href={href} className="text-accent hover:underline">
+            view_comp &rarr;
           </Link>
         )}
       </div>
 
       {result.low_confidence_fields.length > 0 && (
-        <p className="mt-2 text-amber-600 dark:text-amber-400">
+        <p className="mt-2 text-amber-400">
           Double-check: {result.low_confidence_fields.join(", ")}
         </p>
       )}
 
       {result.comparison && (
-        <p className="mt-2 text-black/70 dark:text-white/70">
+        <p className="mt-2 text-dim">
           This is{" "}
-          <span className="font-medium">
+          <span className="font-medium text-foreground">
             {result.comparison.pct_diff > 0 ? "+" : ""}
             {result.comparison.pct_diff}%
           </span>{" "}

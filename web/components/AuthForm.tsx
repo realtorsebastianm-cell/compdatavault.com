@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth";
+import Cursor from "./Cursor";
 
 export default function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const { signIn, signUp } = useAuth();
@@ -32,41 +33,42 @@ export default function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
       onSubmit={onSubmit}
       className="mx-auto mt-16 flex max-w-sm flex-col gap-4 px-6"
     >
-      <h1 className="text-2xl font-semibold">
-        {mode === "sign-in" ? "Sign in" : "Create your account"}
+      <h1 className="flex items-center text-xl font-medium">
+        {mode === "sign-in" ? "sign_in" : "create_account"}
+        <Cursor className="ml-2" />
       </h1>
 
-      <label className="flex flex-col gap-1 text-sm">
-        Email
+      <label className="flex flex-col gap-1 text-sm text-dim">
+        email
         <input
           type="email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded-md border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
+          className="border border-line bg-transparent px-3 py-2 text-foreground focus:border-accent focus:outline-none"
         />
       </label>
 
-      <label className="flex flex-col gap-1 text-sm">
-        Password
+      <label className="flex flex-col gap-1 text-sm text-dim">
+        password
         <input
           type="password"
           required
           minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="rounded-md border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
+          className="border border-line bg-transparent px-3 py-2 text-foreground focus:border-accent focus:outline-none"
         />
       </label>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-400">{error}</p>}
 
       <button
         type="submit"
         disabled={submitting}
-        className="mt-2 rounded-md bg-orange-600 px-4 py-2 font-medium text-white hover:bg-orange-700 disabled:opacity-50"
+        className="mt-2 border border-accent bg-accent px-4 py-2 font-medium text-background hover:bg-transparent hover:text-accent disabled:opacity-50"
       >
-        {submitting ? "..." : mode === "sign-in" ? "Sign in" : "Sign up"}
+        {submitting ? "..." : mode === "sign-in" ? "sign_in" : "sign_up"}
       </button>
     </form>
   );

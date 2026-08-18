@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api, type LeaseComp, type SaleComp } from "@/lib/api";
+import Cursor from "@/components/Cursor";
 
 export default function CompDetailPage() {
   return (
@@ -41,8 +42,14 @@ function CompDetail() {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"));
   }, [type, id]);
 
-  if (error) return <p className="mx-auto max-w-6xl px-6 py-10 text-sm text-red-600">{error}</p>;
-  if (!comp) return <p className="mx-auto max-w-6xl px-6 py-10 text-sm text-black/60 dark:text-white/60">Loading&hellip;</p>;
+  if (error) return <p className="mx-auto max-w-6xl px-6 py-10 text-sm text-red-400">{error}</p>;
+  if (!comp)
+    return (
+      <p className="mx-auto flex max-w-6xl items-center px-6 py-10 text-sm text-dim">
+        loading
+        <Cursor className="ml-2" />
+      </p>
+    );
 
   const isSale = type === "sale";
   const sale = isSale ? (comp as SaleComp) : null;
@@ -51,11 +58,14 @@ function CompDetail() {
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-6 py-10 lg:grid-cols-2">
       <div>
-        <p className="text-xs uppercase tracking-wide text-black/50 dark:text-white/50">
+        <p className="text-xs uppercase tracking-wide text-dim">
           {isSale ? "Sale comp" : "Lease comp"}
         </p>
-        <h1 className="mt-1 text-2xl font-semibold">{comp.address}</h1>
-        <p className="mt-1 text-sm text-black/60 dark:text-white/60">
+        <h1 className="mt-1 flex items-center text-xl font-medium">
+          {comp.address}
+          <Cursor className="ml-2" />
+        </h1>
+        <p className="mt-1 text-sm text-dim">
           {[comp.city, comp.state].filter(Boolean).join(", ")}
         </p>
 
@@ -103,19 +113,20 @@ function CompDetail() {
 
         {comp.notes && (
           <div className="mt-6">
-            <p className="text-xs uppercase tracking-wide text-black/50 dark:text-white/50">
-              Notes
-            </p>
+            <p className="text-xs uppercase tracking-wide text-dim">Notes</p>
             <p className="mt-1 text-sm">{comp.notes}</p>
           </div>
         )}
       </div>
 
-      <div className="rounded-lg border border-black/10 bg-black/[0.02] dark:border-white/10 dark:bg-white/[0.02]">
+      <div className="border border-line bg-accent/[0.03]">
         {flyerUrl ? (
-          <iframe src={flyerUrl} className="h-[80vh] w-full rounded-lg" title="Original flyer" />
+          <iframe src={flyerUrl} className="h-[80vh] w-full" title="Original flyer" />
         ) : (
-          <p className="p-6 text-sm text-black/60 dark:text-white/60">Loading flyer&hellip;</p>
+          <p className="flex items-center p-6 text-sm text-dim">
+            loading_flyer
+            <Cursor className="ml-2" />
+          </p>
         )}
       </div>
     </div>
@@ -133,9 +144,7 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-black/50 dark:text-white/50">
-        {label}
-      </dt>
+      <dt className="text-xs uppercase tracking-wide text-dim">{label}</dt>
       <dd className={`mt-0.5 ${className ?? ""}`}>{value}</dd>
     </div>
   );

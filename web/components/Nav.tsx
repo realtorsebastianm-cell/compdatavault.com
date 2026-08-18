@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import Cursor from "./Cursor";
 
 const LINKS = [
-  { href: "/sale", label: "Sale" },
-  { href: "/lease", label: "Lease" },
-  { href: "/upload", label: "Upload" },
-  { href: "/settings", label: "Settings" },
+  { href: "/sale", label: "sale" },
+  { href: "/lease", label: "lease" },
+  { href: "/upload", label: "upload" },
+  { href: "/settings", label: "settings" },
 ];
 
 export default function Nav() {
@@ -16,10 +17,11 @@ export default function Nav() {
   const pathname = usePathname();
 
   return (
-    <header className="border-b border-black/10 dark:border-white/10">
+    <header className="border-b border-line">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="font-semibold tracking-tight">
-          Deal Archive
+        <Link href="/" className="flex items-center gap-2 font-medium tracking-tight">
+          <span className="text-dim">~/</span>deal-archive
+          <Cursor />
         </Link>
 
         {!loading && email && (
@@ -30,32 +32,29 @@ export default function Nav() {
                 href={link.href}
                 className={
                   pathname === link.href
-                    ? "font-medium text-orange-600 dark:text-orange-400"
-                    : "text-black/60 hover:text-black dark:text-white/60 dark:hover:text-white"
+                    ? "text-accent"
+                    : "text-dim hover:text-foreground"
                 }
               >
                 {link.label}
               </Link>
             ))}
-            <button
-              onClick={signOut}
-              className="text-black/60 hover:text-black dark:text-white/60 dark:hover:text-white"
-            >
-              Sign out
+            <button onClick={signOut} className="text-dim hover:text-foreground">
+              sign_out
             </button>
           </nav>
         )}
 
         {!loading && !email && (
           <nav className="flex items-center gap-4 text-sm">
-            <Link href="/sign-in" className="text-black/60 hover:text-black dark:text-white/60 dark:hover:text-white">
-              Sign in
+            <Link href="/sign-in" className="text-dim hover:text-foreground">
+              sign_in
             </Link>
             <Link
               href="/sign-up"
-              className="rounded-md bg-orange-600 px-3 py-1.5 font-medium text-white hover:bg-orange-700"
+              className="border border-accent px-3 py-1.5 font-medium text-accent hover:bg-accent hover:text-background"
             >
-              Sign up
+              sign_up
             </Link>
           </nav>
         )}
