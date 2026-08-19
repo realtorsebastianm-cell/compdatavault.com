@@ -6,10 +6,10 @@ import { useAuth } from "@/lib/auth";
 import Cursor from "./Cursor";
 
 const LINKS = [
-  { href: "/sale", label: "sale" },
-  { href: "/lease", label: "lease" },
-  { href: "/upload", label: "upload" },
-  { href: "/settings", label: "settings" },
+  { href: "/sale", label: "Sale" },
+  { href: "/lease", label: "Lease" },
+  { href: "/upload", label: "Upload" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function Nav() {
@@ -17,10 +17,13 @@ export default function Nav() {
   const pathname = usePathname();
 
   return (
-    <header className="border-b border-line">
+    <header className="border-b border-line bg-surface">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="flex items-center gap-2 font-medium tracking-tight">
-          <span className="text-dim">~/</span>deal-archive
+        <Link
+          href="/"
+          className="flex items-center gap-2 font-serif text-lg font-bold tracking-tight"
+        >
+          Comp<span className="text-accent">Data</span>Vault
           <Cursor />
         </Link>
 
@@ -40,7 +43,7 @@ export default function Nav() {
               </Link>
             ))}
             <button onClick={signOut} className="text-dim hover:text-foreground">
-              sign_out
+              Sign_out
             </button>
           </nav>
         )}
@@ -48,13 +51,13 @@ export default function Nav() {
         {!loading && !email && (
           <nav className="flex items-center gap-4 text-sm">
             <Link href="/sign-in" className="text-dim hover:text-foreground">
-              sign_in
+              Sign_in
             </Link>
             <Link
               href="/sign-up"
-              className="border border-accent px-3 py-1.5 font-medium text-accent hover:bg-accent hover:text-background"
+              className="rounded-md bg-accent px-4 py-2 font-medium text-background shadow-sm hover:opacity-90"
             >
-              sign_up
+              Sign_up
             </Link>
           </nav>
         )}
