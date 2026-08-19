@@ -16,8 +16,14 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
-      - key: STORAGE_DIR
-        value: /opt/render/project/storage
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
       - key: INBOUND_BASE_ADDRESS
         sync: false
       - key: INBOUND_WEBHOOK_SECRET
