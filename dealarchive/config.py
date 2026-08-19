@@ -10,8 +10,14 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_days: int = 30
 
-    # Storage for raw flyer files
-    storage_dir: str = "./storage"
+    # Storage for raw flyer files -- Cloudflare R2 (S3-compatible). Create a
+    # bucket and an R2 API token in the Cloudflare dashboard (R2 -> Manage
+    # API tokens -> Create API token, "Object Read & Write" permission
+    # scoped to the bucket), then set these on Render.
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket_name: str = "compdatavault-flyers"
 
     # Inbound email ingestion (Cloudflare Email Routing exact-match rule on
     # this one address -> a Cloudflare Worker -> POSTs multipart/form-data

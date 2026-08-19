@@ -10,9 +10,8 @@ from email.parser import BytesParser
 from email.utils import parseaddr
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -30,7 +29,7 @@ from dealarchive.models import (
     SaleComp,
     User,
 )
-from dealarchive.storage import flyer_file_path, save_flyer_file
+from dealarchive.storage import read_flyer_file, save_flyer_file
 
 app = FastAPI(title="Deal Archive API")
 
@@ -465,7 +464,14 @@ def get_flyer_file(flyer_id: str, user: User = Depends(get_current_user)):
         )
         if flyer is None:
             raise HTTPException(status_code=404, detail="Not found")
-        path = flyer_file_path(flyer.storage_path)
-        if not path.exists():
+        try:
+            content = read_flyer_file(flyer.storage_path)
+        except Exception:
             raise HTTPException(status_code=404, detail="File missing from storage")
-        return FileResponse(path, media_type=flyer.content_type, filename=flyer.original_filename)
+        return Response(
+            content=content,
+            media_type=flyer.content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{flyer.original_filename}"'
+            },
+        )
