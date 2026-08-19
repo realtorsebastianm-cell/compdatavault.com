@@ -4,15 +4,17 @@ Run locally: uvicorn dealarchive.api:app --reload
 """
 from __future__ import annotations
 
-import json
 from datetime import date
+from email import policy
+from email.parser import BytesParser
+from email.utils import parseaddr
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from dealarchive.auth import create_access_token, get_current_user, hash_password, verify_password
 from dealarchive.comparison import ComparisonResult, compare_lease_comp, compare_sale_comp
@@ -90,9 +92,14 @@ class MeResponse(BaseModel):
 
 @app.get("/me", response_model=MeResponse)
 def me(user: User = Depends(get_current_user)):
+    # Every broker forwards to the same address -- there's no per-user slug
+    # anymore. /ingest/email identifies whose vault a flyer belongs to by
+    # matching the sender's email against this account's `email`, so what
+    # matters for a given user is that they forward *from* the address
+    # they signed up with, not that they have a unique *to* address.
     return MeResponse(
         email=user.email,
-        forwarding_address=f"{user.forwarding_slug}@{settings.inbound_email_domain}",
+        forwarding_address=settings.inbound_base_address or "(inbound email not configured yet)",
     )
 
 
@@ -225,68 +232,108 @@ async def upload_flyer(file: UploadFile = File(...), user: User = Depends(get_cu
         )
 
 
-@app.post("/ingest/email", response_model=list[FlyerResult])
-async def ingest_email(request: Request, secret: str | None = Query(default=None)):
-    """Webhook target for SendGrid's Inbound Parse.
+def _sender_auth_status(headers) -> str | None:
+    """Best-effort SPF/DKIM read from an Authentication-Results header, if present.
 
-    SendGrid POSTs multipart/form-data with the parsed envelope as a JSON
-    string in the `envelope` field (more reliable than the raw `to`/`from`
-    header fields, which can carry a display name), plus one file part per
-    attachment named attachment1, attachment2, etc., with a matching
-    `attachments` count field. See:
-    https://www.twilio.com/docs/sendgrid/for-developers/parsing-email/setting-up-the-inbound-parse-webhook
-
-    Each broker's forwarding address is <forwarding_slug>@INBOUND_EMAIL_DOMAIN
-    -- unlike Postmark, SendGrid Inbound Parse is set up per custom domain
-    (via an MX record), so every address on that domain routes here directly,
-    no shared-mailbox "+" convention needed.
-
-    Inbound Parse has no header/signature auth of its own, so the webhook
-    URL configured in SendGrid's dashboard should include ?secret=... and
-    that's checked against INBOUND_WEBHOOK_SECRET here.
+    Cloudflare Email Routing doesn't guarantee this header on every message
+    (depends on the sending server's own setup), so absence isn't treated as
+    failure -- only an explicit "fail" is. This exists because matching
+    accounts purely on an unauthenticated From header is spoofable in
+    principle; treat an explicit SPF/DKIM fail as a signal to reject rather
+    than silently filing a forged email into someone's comp vault.
     """
-    if settings.inbound_webhook_secret and secret != settings.inbound_webhook_secret:
+    auth_results = headers.get("Authentication-Results", "")
+    if not auth_results:
+        return None
+    lowered = auth_results.lower()
+    if "spf=fail" in lowered or "dkim=fail" in lowered:
+        return "fail"
+    return "ok"
+
+
+@app.post("/ingest/email", response_model=list[FlyerResult])
+async def ingest_email(
+    from_address: str = Form(...),
+    to_address: str = Form(...),
+    subject: str = Form(""),
+    raw_email: UploadFile = File(...),
+    x_ingest_secret: str | None = Header(default=None, alias="X-Ingest-Secret"),
+):
+    """Webhook target invoked by our own Cloudflare Email Worker.
+
+    Every broker forwards flyers to the same address (settings.inbound_base_address,
+    e.g. "deals@compdatavault.com") -- there's no per-user routing trick. Cloudflare
+    Email Routing has one exact-match rule on that address pointing at a Worker,
+    which POSTs the envelope from/to, the Subject header, and the full raw .eml as
+    multipart/form-data here.
+
+    Whose vault a flyer lands in is decided by matching the envelope From address
+    against User.email (case-insensitive). This means a broker must forward from
+    the same email they signed up with -- if they habitually forward from a
+    different (e.g. work/brokerage) address, this will 404 until either they sign
+    up with that address or account settings grow support for multiple authorized
+    sender addresses.
+
+    The Worker has no built-in request signing, so it sends a shared secret in
+    X-Ingest-Secret, checked here against INBOUND_WEBHOOK_SECRET. Set the same
+    value in both places (`wrangler secret put INGEST_SHARED_SECRET` on the Worker,
+    INBOUND_WEBHOOK_SECRET in Render's env vars).
+    """
+    if settings.inbound_webhook_secret and x_ingest_secret != settings.inbound_webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-    form = await request.form()
+    _, recipient_email = parseaddr(to_address)
+    if settings.inbound_base_address and recipient_email.lower() != settings.inbound_base_address.lower():
+        # Defense in depth in case the Worker's own address guard is ever
+        # loosened/misconfigured -- only the one address we advertise should
+        # ever result in a flyer being filed.
+        raise HTTPException(status_code=400, detail="Unexpected recipient address")
 
-    envelope_raw = form.get("envelope")
-    if not envelope_raw:
-        raise HTTPException(status_code=400, detail="Missing envelope field")
-    envelope = json.loads(envelope_raw)
-    recipients: list[str] = envelope.get("to") or []
-    sender: str = envelope.get("from") or form.get("from", "")
+    _, sender_email = parseaddr(from_address)
+    if not sender_email:
+        raise HTTPException(status_code=400, detail="Could not parse a sender address from From")
 
-    if not recipients:
-        raise HTTPException(status_code=400, detail="Envelope has no recipients")
-    slug = recipients[0].split("@", 1)[0]
+    raw_bytes = await raw_email.read()
+    parsed_message = BytesParser(policy=policy.default).parsebytes(raw_bytes)
 
-    attachment_count = int(form.get("attachments", 0) or 0)
-    attachments = [
-        form[f"attachment{i}"] for i in range(1, attachment_count + 1) if f"attachment{i}" in form
-    ]
+    if _sender_auth_status(parsed_message) == "fail":
+        raise HTTPException(status_code=403, detail="Sender failed SPF/DKIM verification")
+
+    attachments: list[tuple[bytes, str, str]] = []
+    for part in parsed_message.iter_attachments():
+        content = part.get_content()
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        attachments.append((content, part.get_filename() or "flyer", part.get_content_type()))
+
     if not attachments:
         raise HTTPException(status_code=400, detail="No attachments on this email")
 
     with SessionLocal() as session:
-        user = session.scalar(select(User).where(User.forwarding_slug == slug))
+        user = session.scalar(
+            select(User).where(func.lower(User.email) == sender_email.lower())
+        )
         if user is None:
-            # No matching account -- the provider-side auto-reply ("sign up
-            # first") is triggered off this 404, not sent from here.
-            raise HTTPException(status_code=404, detail="No account matches this forwarding address")
+            # No matching account -- nothing auto-replies on our behalf, so
+            # a "sign up first" / "forward from your account email" bounce
+            # would need to be sent from here explicitly if that's wanted
+            # later.
+            raise HTTPException(
+                status_code=404,
+                detail="No account matches this sender address -- forward from the email you signed up with",
+            )
 
         results = []
-        for attachment in attachments:
-            content = await attachment.read()
+        for content, filename, content_type in attachments:
             results.append(
                 _process_flyer(
                     session,
                     user,
                     content,
-                    attachment.filename or "flyer",
-                    attachment.content_type or "",
+                    filename,
+                    content_type,
                     "email",
-                    sender,
+                    sender_email,
                 )
             )
         return results

@@ -54,9 +54,6 @@ class User(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String)
-    # Unique local-part for this broker's forwarding address, e.g.
-    # "<forwarding_slug>@deals.dealarchive.app".
-    forwarding_slug: Mapped[str] = mapped_column(String, unique=True, index=True, default=_uuid)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     flyers: Mapped[list["Flyer"]] = relationship(back_populates="user")
