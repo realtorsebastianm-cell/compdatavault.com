@@ -7,3 +7,5 @@ dealarchive.egg-info/
 web/node_modules/
 web/.next/
 web/.env.local
+worker/node_modules/
+worker/.wrangler/
