@@ -3,7 +3,7 @@
 	"name": "compdatavault-inbound-email",
 	"main": "src/index.js",
 	"compatibility_date": "2026-08-01",
-
+	"compatibility_flags": ["nodejs_compat"],
 	// BACKEND_URL and INBOUND_ADDRESS aren't sensitive, so they live here as
 	// plain vars. INGEST_SHARED_SECRET is sensitive — set it with:
 	//   npx wrangler secret put INGEST_SHARED_SECRET
