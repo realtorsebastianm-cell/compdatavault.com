@@ -26,7 +26,7 @@ from dealarchive.db import SessionLocal
 from dealarchive.export import build_workbook
 from dealarchive.extraction import extract_flyer
 from dealarchive.matching import parse_query, rank_by_residual
-from dealarchive.valuation import parse_property, rank_for_valuation
+from dealarchive.valuation import PropertyProfile, parse_property, rank_for_valuation
 from dealarchive.models import (
     DealType,
     ExtractionStatus,
@@ -740,8 +740,22 @@ VALUE_ESTIMATE_SAMPLE = 8
 
 
 class ValueRequest(BaseModel):
-    description: str
+    # "describe" sends free text through the LLM parser (dealarchive/
+    # valuation.py::parse_property). "manual" skips that entirely -- the
+    # structured fields below go straight into the SQL filters with no LLM
+    # in the loop, for a broker who wants the number-matching to be exact
+    # rather than trust an LLM's read of a paragraph. `notes` still feeds
+    # the second-stage qualitative ranking pass either way, since that's
+    # genuinely a text-understanding task, not a number-extraction one.
+    mode: Literal["describe", "manual"] = "describe"
     deal_type: Literal["sale", "lease"]
+    description: str = ""
+    property_type: PropertyType | None = None
+    submarket: str | None = None
+    zoning: str | None = None
+    building_sf: float | None = None
+    lot_sf: float | None = None
+    notes: str | None = None
 
 
 class ValueMatch(BaseModel):
@@ -773,30 +787,61 @@ def _value_candidates(session, model, user_id, profile, property_type_enum, narr
     if profile.submarket:
         stmt = stmt.where(model.submarket.ilike(f"%{profile.submarket}%"))
         narrowed_by.append("submarket")
+    if profile.zoning:
+        stmt = stmt.where(model.zoning.ilike(f"%{profile.zoning}%"))
+        narrowed_by.append("zoning")
     if profile.building_sf:
         low = profile.building_sf * (1 - VALUE_SF_WINDOW_PCT)
         high = profile.building_sf * (1 + VALUE_SF_WINDOW_PCT)
         stmt = stmt.where(model.building_sf.between(low, high))
         narrowed_by.append("building_sf")
+    if profile.lot_sf:
+        low = profile.lot_sf * (1 - VALUE_SF_WINDOW_PCT)
+        high = profile.lot_sf * (1 + VALUE_SF_WINDOW_PCT)
+        stmt = stmt.where(model.lot_sf.between(low, high))
+        narrowed_by.append("lot_sf")
     stmt = stmt.order_by(model.date_received.desc()).limit(VALUE_CANDIDATE_LIMIT)
     return session.scalars(stmt).all()
 
 
 @app.post("/value", response_model=ValueResponse)
 def value_property(body: ValueRequest, user: User = Depends(get_current_user)):
-    """A broker pastes in a description of a property they're valuing;
-    this matches it against their own vault and returns the comps that
-    best support a value, plus a rough estimate computed from them. See
-    dealarchive/valuation.py for the parse/rank design -- same two-stage
-    shape as /ask, but oriented at "give me a defensible comp set" rather
-    than "find the one thing I described"."""
-    if not body.description.strip():
-        raise HTTPException(status_code=400, detail="Property description is required")
-
-    try:
-        profile = parse_property(body.description)
-    except Exception as e:  # noqa: BLE001 -- surfaced to the caller, not silently swallowed
-        raise HTTPException(status_code=502, detail=f"Couldn't understand that description: {e}")
+    """A broker either pastes in a freeform description of a property
+    they're valuing (mode="describe", parsed by an LLM -- see
+    dealarchive/valuation.py) or fills out exact fields themselves
+    (mode="manual", no LLM involved in the numbers at all). Either way
+    this matches the resulting profile against the broker's own vault and
+    returns the comps that best support a value, plus a rough estimate
+    computed from them -- same two-stage shape as /ask, but oriented at
+    "give me a defensible comp set" rather than "find the one thing I
+    described"."""
+    if body.mode == "manual":
+        if not any(
+            [
+                body.property_type,
+                body.submarket,
+                body.zoning,
+                body.building_sf,
+                body.lot_sf,
+                body.notes,
+            ]
+        ):
+            raise HTTPException(status_code=400, detail="Fill in at least one field")
+        profile = PropertyProfile(
+            property_type=body.property_type.value if body.property_type else None,
+            submarket=body.submarket,
+            zoning=body.zoning,
+            building_sf=body.building_sf,
+            lot_sf=body.lot_sf,
+            notes_summary=body.notes,
+        )
+    else:
+        if not body.description.strip():
+            raise HTTPException(status_code=400, detail="Property description is required")
+        try:
+            profile = parse_property(body.description)
+        except Exception as e:  # noqa: BLE001 -- surfaced to the caller, not silently swallowed
+            raise HTTPException(status_code=502, detail=f"Couldn't understand that description: {e}")
 
     property_type_enum = None
     if profile.property_type:

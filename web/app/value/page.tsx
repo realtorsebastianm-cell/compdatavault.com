@@ -2,7 +2,14 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { api, type DealType, type ValueMatch, type ValueResponse } from "@/lib/api";
+import {
+  api,
+  PROPERTY_TYPES,
+  type DealType,
+  type PropertyType,
+  type ValueMatch,
+  type ValueResponse,
+} from "@/lib/api";
 import Cursor from "@/components/Cursor";
 
 const RATE_LABEL: Record<string, string> = {
@@ -14,20 +21,58 @@ const RATE_LABEL: Record<string, string> = {
 const EXAMPLE =
   "22,000 SF industrial building on a 1.1 acre lot in the Northgate submarket, built 2014, 20' clear height, 2 dock doors and 1 drive-in, M-1 zoned, recently re-roofed.";
 
+const inputClass =
+  "border border-line bg-transparent px-3 py-2 text-sm text-foreground focus:border-accent focus:outline-none";
+
 export default function ValuePage() {
+  const [inputMode, setInputMode] = useState<"describe" | "manual">("describe");
   const [description, setDescription] = useState("");
+
+  // Manual mode -- exact fields, no LLM involved in the numbers. For a
+  // broker who wants the size/submarket/zoning matching to be precise
+  // rather than trust an LLM's read of a paragraph.
+  const [propertyType, setPropertyType] = useState<PropertyType | "">("");
+  const [submarket, setSubmarket] = useState("");
+  const [zoning, setZoning] = useState("");
+  const [buildingSf, setBuildingSf] = useState("");
+  const [lotSf, setLotSf] = useState("");
+  const [manualNotes, setManualNotes] = useState("");
+
   const [dealType, setDealType] = useState<DealType>("sale");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ValueResponse | null>(null);
 
+  const manualHasInput =
+    propertyType !== "" ||
+    submarket.trim() !== "" ||
+    zoning.trim() !== "" ||
+    buildingSf.trim() !== "" ||
+    lotSf.trim() !== "" ||
+    manualNotes.trim() !== "";
+
+  const canSubmit = inputMode === "describe" ? description.trim() !== "" : manualHasInput;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!description.trim() || loading) return;
+    if (!canSubmit || loading) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await api.value(description, dealType);
+      const result =
+        inputMode === "describe"
+          ? await api.valueByDescription(description, dealType)
+          : await api.valueByFields(
+              {
+                property_type: propertyType || undefined,
+                submarket: submarket.trim() || undefined,
+                zoning: zoning.trim() || undefined,
+                building_sf: buildingSf.trim() ? Number(buildingSf) : undefined,
+                lot_sf: lotSf.trim() ? Number(lotSf) : undefined,
+                notes: manualNotes.trim() || undefined,
+              },
+              dealType
+            );
       setResponse(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Valuation failed");
@@ -44,14 +89,13 @@ export default function ValuePage() {
         <Cursor className="ml-2" />
       </h1>
       <p className="mt-2 text-sm text-dim">
-        Describe the property you&rsquo;re valuing -- size, submarket,
-        zoning, condition, whatever you&rsquo;d put on a flyer -- and
-        we&rsquo;ll match it against your own vault and estimate a value
-        off the closest comps.
+        Describe the property you&rsquo;re valuing, or fill out the exact
+        fields yourself, and we&rsquo;ll match it against your own vault
+        and estimate a value off the closest comps.
       </p>
 
       <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-3">
-        <div className="flex gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           {(["sale", "lease"] as const).map((dt) => (
             <button
               key={dt}
@@ -66,17 +110,109 @@ export default function ValuePage() {
               {dt}
             </button>
           ))}
+          <span className="mx-1 text-line">|</span>
+          {(
+            [
+              { key: "describe", label: "describe_it" },
+              { key: "manual", label: "fill_out_fields" },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setInputMode(opt.key)}
+              className={`border px-3 py-1.5 font-medium uppercase tracking-wide ${
+                inputMode === opt.key
+                  ? "border-accent bg-accent text-background"
+                  : "border-line text-dim hover:border-accent hover:text-foreground"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder={EXAMPLE}
-          rows={5}
-          className="border border-line bg-transparent px-3 py-2 text-sm text-foreground focus:border-accent focus:outline-none"
-        />
+
+        {inputMode === "describe" ? (
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={EXAMPLE}
+            rows={5}
+            className={inputClass}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Property type
+              <select
+                value={propertyType}
+                onChange={(e) => setPropertyType(e.target.value as PropertyType | "")}
+                className={inputClass}
+              >
+                <option value="">—</option>
+                {PROPERTY_TYPES.map((pt) => (
+                  <option key={pt} value={pt}>
+                    {pt}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Submarket
+              <input
+                value={submarket}
+                onChange={(e) => setSubmarket(e.target.value)}
+                placeholder="e.g. Northgate"
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Building SF
+              <input
+                type="number"
+                min="0"
+                value={buildingSf}
+                onChange={(e) => setBuildingSf(e.target.value)}
+                placeholder="e.g. 22000"
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Lot SF
+              <input
+                type="number"
+                min="0"
+                value={lotSf}
+                onChange={(e) => setLotSf(e.target.value)}
+                placeholder="e.g. 48000"
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Zoning
+              <input
+                value={zoning}
+                onChange={(e) => setZoning(e.target.value)}
+                placeholder="e.g. M-1"
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim sm:col-span-2">
+              Other details (condition, clear height, dock doors, parking, etc.)
+              <textarea
+                value={manualNotes}
+                onChange={(e) => setManualNotes(e.target.value)}
+                rows={3}
+                placeholder="Only used to rank/explain fit -- never to fill in the fields above"
+                className={inputClass}
+              />
+            </label>
+          </div>
+        )}
+
         <button
           type="submit"
-          disabled={loading || !description.trim()}
+          disabled={loading || !canSubmit}
           className="self-start border border-accent bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-transparent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? "matching..." : "find_comps"}

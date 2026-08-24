@@ -112,6 +112,15 @@ export interface ValueResponse {
   narrowed_by: string[];
 }
 
+export interface ManualValueFields {
+  property_type?: PropertyType;
+  submarket?: string;
+  zoning?: string;
+  building_sf?: number;
+  lot_sf?: number;
+  notes?: string;
+}
+
 const TOKEN_KEY = "dealarchive_token";
 
 export function getToken(): string | null {
@@ -191,10 +200,25 @@ export const api = {
       body: JSON.stringify({ query }),
     }),
 
-  value: (description: string, dealType: DealType) =>
+  valueByDescription: (description: string, dealType: DealType) =>
     request<ValueResponse>("/value", {
       method: "POST",
-      body: JSON.stringify({ description, deal_type: dealType }),
+      body: JSON.stringify({ mode: "describe", description, deal_type: dealType }),
+    }),
+
+  valueByFields: (fields: ManualValueFields, dealType: DealType) =>
+    request<ValueResponse>("/value", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "manual",
+        deal_type: dealType,
+        property_type: fields.property_type ?? null,
+        submarket: fields.submarket || null,
+        zoning: fields.zoning || null,
+        building_sf: fields.building_sf ?? null,
+        lot_sf: fields.lot_sf ?? null,
+        notes: fields.notes || null,
+      }),
     }),
 
   async exportComps(saleCompIds: string[], leaseCompIds: string[]): Promise<void> {
