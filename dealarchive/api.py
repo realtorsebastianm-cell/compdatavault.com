@@ -4,11 +4,13 @@ Run locally: uvicorn dealarchive.api:app --reload
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from email import policy
 from email.parser import BytesParser
 from email.utils import parseaddr
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,10 +35,17 @@ from dealarchive.storage import read_flyer_file, save_flyer_file
 
 app = FastAPI(title="Deal Archive API")
 
+# FRONTEND_URL only pins down one host (e.g. "www.compdatavault.com"), but
+# both the bare domain and the www subdomain resolve and get used by real
+# visitors -- CORS needs to accept whichever one the browser is actually on,
+# not just the exact string in the env var. Vercel preview deploys also need
+# to keep working, hence the extra regex alternative.
+_frontend_host = urlparse(settings.frontend_url).netloc
+_frontend_bare_host = re.sub(r"^www\.", "", _frontend_host)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=rf"https://(www\.)?{re.escape(_frontend_bare_host)}|https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
