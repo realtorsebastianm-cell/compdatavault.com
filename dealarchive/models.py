@@ -60,6 +60,7 @@ class User(Base):
     sale_comps: Mapped[list["SaleComp"]] = relationship(back_populates="user")
     lease_comps: Mapped[list["LeaseComp"]] = relationship(back_populates="user")
     authorized_senders: Mapped[list["AuthorizedSender"]] = relationship(back_populates="user")
+    saved_searches: Mapped[list["SavedSearch"]] = relationship(back_populates="user")
 
 
 class AuthorizedSender(Base):
@@ -90,6 +91,74 @@ class AuthorizedSender(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped[User] = relationship(back_populates="authorized_senders")
+
+
+class SavedSearch(Base):
+    """A broker's saved Ask AI query, re-checked against every new comp as
+    it's ingested (see dealarchive/api.py::_matches_saved_search, called
+    from _process_flyer) so they get alerted the moment something matching
+    comes in, instead of having to remember to re-run the search.
+
+    The query is parsed into structured filters once, at save time (same
+    dealarchive/matching.py::parse_query used by /ask) and those filter
+    values are what every new comp is actually checked against -- plain
+    field comparisons, no LLM call per comp. residual_criteria is stored
+    for display only; matching a new comp's notes against qualitative
+    criteria would mean an LLM call on every single ingested flyer for
+    every saved search, which doesn't scale, so v1 only alerts on the
+    structured half of a query.
+    """
+
+    __tablename__ = "saved_searches"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    query: Mapped[str] = mapped_column(Text)
+
+    deal_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    property_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    submarket: Mapped[str | None] = mapped_column(String, nullable=True)
+    zoning: Mapped[str | None] = mapped_column(String, nullable=True)
+    building_sf_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    building_sf_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    lot_sf_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    lot_sf_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    price_per_sf_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    price_per_sf_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    price_per_unit_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    price_per_unit_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    cap_rate_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    cap_rate_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    rate_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    rate_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    residual_criteria: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped[User] = relationship(back_populates="saved_searches")
+
+
+class SavedSearchMatch(Base):
+    """One comp that matched a saved search at ingestion time. Deleting
+    the saved search or the matched comp cascades and removes this row --
+    a match record referencing either isn't meaningful on its own."""
+
+    __tablename__ = "saved_search_matches"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    saved_search_id: Mapped[str] = mapped_column(
+        ForeignKey("saved_searches.id", ondelete="CASCADE"), index=True
+    )
+    deal_type: Mapped[DealType] = mapped_column(Enum(DealType))
+    sale_comp_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sale_comps.id", ondelete="CASCADE"), nullable=True
+    )
+    lease_comp_id: Mapped[str | None] = mapped_column(
+        ForeignKey("lease_comps.id", ondelete="CASCADE"), nullable=True
+    )
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Flyer(Base):

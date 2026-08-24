@@ -17,11 +17,32 @@ export default function AskPage() {
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<AskResponse | null>(null);
 
+  const [savingSearch, setSavingSearch] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function handleSaveSearch(e: FormEvent) {
+    e.preventDefault();
+    if (!saveName.trim()) return;
+    setSaveError(null);
+    try {
+      await api.createSavedSearch(saveName.trim(), query);
+      setSaved(true);
+      setSavingSearch(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Couldn't save that search");
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!query.trim() || loading) return;
     setLoading(true);
     setError(null);
+    setSavingSearch(false);
+    setSaved(false);
+    setSaveError(null);
     try {
       const result = await api.ask(query);
       setResponse(result);
@@ -90,6 +111,43 @@ export default function AskPage() {
             understood={response.understood}
             residual={response.residual_criteria}
           />
+
+          <div className="mt-3">
+            {saved ? (
+              <p className="text-xs text-accent">
+                Saved -- you&rsquo;ll see it flagged on the{" "}
+                <Link href="/alerts" className="underline">
+                  Alerts
+                </Link>{" "}
+                page whenever a new comp matches.
+              </p>
+            ) : savingSearch ? (
+              <form onSubmit={handleSaveSearch} className="flex gap-2">
+                <input
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="Name this search"
+                  autoFocus
+                  className="flex-1 border border-line bg-transparent px-3 py-1.5 text-xs text-foreground focus:border-accent focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!saveName.trim()}
+                  className="border border-accent bg-accent px-3 py-1.5 text-xs font-medium text-background hover:bg-transparent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  confirm
+                </button>
+              </form>
+            ) : (
+              <button
+                onClick={() => setSavingSearch(true)}
+                className="text-xs text-dim underline hover:text-accent"
+              >
+                save_this_search -- get alerted on future matches
+              </button>
+            )}
+            {saveError && <p className="mt-1 text-xs text-red-400">{saveError}</p>}
+          </div>
 
           {response.matches.length === 0 ? (
             <p className="mt-6 text-sm text-dim">

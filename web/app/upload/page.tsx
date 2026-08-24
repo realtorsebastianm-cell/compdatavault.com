@@ -146,6 +146,18 @@ function ResultCard({ result }: { result: FlyerResult }) {
           already in your vault.
         </p>
       )}
+
+      {result.matched_saved_searches.length > 0 && (
+        <p className="mt-2 text-accent">
+          Matches your saved search
+          {result.matched_saved_searches.length === 1 ? "" : "es"}:{" "}
+          {result.matched_saved_searches.join(", ")} --{" "}
+          <Link href="/alerts" className="underline">
+            view in Alerts
+          </Link>
+          .
+        </p>
+      )}
     </div>
   );
 }

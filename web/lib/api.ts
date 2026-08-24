@@ -76,6 +76,7 @@ export interface FlyerResult {
   low_confidence_fields: string[];
   comparison: ComparisonOut | null;
   possible_duplicate: PossibleDuplicateOut | null;
+  matched_saved_searches: string[];
   error: string | null;
 }
 
@@ -96,6 +97,24 @@ export interface AuthorizedSender {
   email: string;
   verified: boolean;
   verification_code: string | null;
+  created_at: string;
+}
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+  understood: Record<string, unknown>;
+  residual_criteria: string | null;
+  unseen_count: number;
+  created_at: string;
+}
+
+export interface SavedSearchMatch {
+  id: string;
+  deal_type: DealType;
+  comp: SaleComp | LeaseComp;
+  seen: boolean;
   created_at: string;
 }
 
@@ -216,6 +235,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ query }),
     }),
+
+  savedSearches: () => request<SavedSearch[]>("/saved-searches"),
+  createSavedSearch: (name: string, query: string) =>
+    request<SavedSearch>("/saved-searches", {
+      method: "POST",
+      body: JSON.stringify({ name, query }),
+    }),
+  deleteSavedSearch: (id: string) =>
+    request<void>(`/saved-searches/${id}`, { method: "DELETE" }),
+  savedSearchMatches: (id: string) =>
+    request<SavedSearchMatch[]>(`/saved-searches/${id}/matches`),
 
   valueByDescription: (description: string, dealType: DealType) =>
     request<ValueResponse>("/value", {

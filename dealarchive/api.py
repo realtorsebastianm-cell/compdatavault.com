@@ -36,6 +36,8 @@ from dealarchive.models import (
     LeaseComp,
     PropertyType,
     SaleComp,
+    SavedSearch,
+    SavedSearchMatch,
     User,
 )
 from dealarchive.storage import delete_flyer_file, read_flyer_file, save_flyer_file
@@ -247,6 +249,7 @@ class FlyerResult(BaseModel):
     low_confidence_fields: list[str] = []
     comparison: ComparisonOut | None = None
     possible_duplicate: PossibleDuplicateOut | None = None
+    matched_saved_searches: list[str] = []
     error: str | None = None
 
 
@@ -284,6 +287,71 @@ def _find_duplicate(session, model, user_id: str, address: str):
         if _normalize_address(candidate.address) == normalized:
             return candidate
     return None
+
+
+def _matches_saved_search(search: SavedSearch, comp, deal_type: str) -> bool:
+    """Plain field comparisons only -- no LLM call, since this runs against
+    every saved search on every single comp ingested (upload or forward)
+    and needs to stay cheap. residual_criteria (the qualitative half of a
+    parsed query) is intentionally not checked here; see SavedSearch's
+    docstring in dealarchive/models.py."""
+    if search.deal_type and search.deal_type != deal_type:
+        return False
+    if search.property_type and (not comp.property_type or comp.property_type.value != search.property_type):
+        return False
+    if search.submarket and (not comp.submarket or search.submarket.lower() not in comp.submarket.lower()):
+        return False
+    if search.zoning and (not comp.zoning or search.zoning.lower() not in comp.zoning.lower()):
+        return False
+    if search.building_sf_min is not None and (comp.building_sf is None or comp.building_sf < search.building_sf_min):
+        return False
+    if search.building_sf_max is not None and (comp.building_sf is None or comp.building_sf > search.building_sf_max):
+        return False
+    if search.lot_sf_min is not None and (comp.lot_sf is None or comp.lot_sf < search.lot_sf_min):
+        return False
+    if search.lot_sf_max is not None and (comp.lot_sf is None or comp.lot_sf > search.lot_sf_max):
+        return False
+    if deal_type == "sale":
+        if search.price_per_sf_min is not None and (comp.price_per_sf is None or comp.price_per_sf < search.price_per_sf_min):
+            return False
+        if search.price_per_sf_max is not None and (comp.price_per_sf is None or comp.price_per_sf > search.price_per_sf_max):
+            return False
+        if search.price_per_unit_min is not None and (comp.price_per_unit is None or comp.price_per_unit < search.price_per_unit_min):
+            return False
+        if search.price_per_unit_max is not None and (comp.price_per_unit is None or comp.price_per_unit > search.price_per_unit_max):
+            return False
+        if search.cap_rate_min is not None and (comp.cap_rate is None or comp.cap_rate < search.cap_rate_min):
+            return False
+        if search.cap_rate_max is not None and (comp.cap_rate is None or comp.cap_rate > search.cap_rate_max):
+            return False
+    else:
+        if search.rate_min is not None and (comp.rate is None or comp.rate < search.rate_min):
+            return False
+        if search.rate_max is not None and (comp.rate is None or comp.rate > search.rate_max):
+            return False
+    return True
+
+
+def _check_saved_searches(session, user_id: str, comp, deal_type: str) -> list[str]:
+    """Runs a freshly-flushed comp against every saved search the broker
+    has, records a SavedSearchMatch for each hit, and returns the matched
+    searches' names so the ingestion response can surface an immediate
+    "matches your saved search 'X'" callout."""
+    searches = session.scalars(select(SavedSearch).where(SavedSearch.user_id == user_id)).all()
+    matched_names: list[str] = []
+    for search in searches:
+        if not _matches_saved_search(search, comp, deal_type):
+            continue
+        session.add(
+            SavedSearchMatch(
+                saved_search_id=search.id,
+                deal_type=DealType(deal_type),
+                sale_comp_id=comp.id if deal_type == "sale" else None,
+                lease_comp_id=comp.id if deal_type == "lease" else None,
+            )
+        )
+        matched_names.append(search.name)
+    return matched_names
 
 
 def _process_flyer(session, user: User, content: bytes, filename: str, content_type: str, source: str, sender_email: str | None) -> FlyerResult:
@@ -352,6 +420,7 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
         session.flush()
         comparison = compare_sale_comp(session, user.id, comp)
         comp_id = comp.id
+        matched_search_names = _check_saved_searches(session, user.id, comp, "sale")
     else:
         if address != "Unknown address":
             duplicate = _find_duplicate(session, LeaseComp, user.id, address)
@@ -379,6 +448,7 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
         session.flush()
         comparison = compare_lease_comp(session, user.id, comp)
         comp_id = comp.id
+        matched_search_names = _check_saved_searches(session, user.id, comp, "lease")
 
     session.commit()
 
@@ -394,6 +464,7 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             if duplicate
             else None
         ),
+        matched_saved_searches=matched_search_names,
     )
 
 
@@ -854,6 +925,180 @@ def ask(body: AskRequest, user: User = Depends(get_current_user)):
             },
             residual_criteria=parsed.residual_criteria,
         )
+
+
+# --------------------------------------------------------------------------
+# Saved searches -- an Ask AI query that keeps running. Every comp
+# ingested (upload or forward) gets checked against the broker's saved
+# searches at creation time (_check_saved_searches, called from
+# _process_flyer above); this section is just the CRUD + match feed on
+# top of that.
+# --------------------------------------------------------------------------
+
+
+class SavedSearchCreate(BaseModel):
+    name: str
+    query: str
+
+
+class SavedSearchOut(BaseModel):
+    id: str
+    name: str
+    query: str
+    understood: dict
+    residual_criteria: str | None
+    unseen_count: int
+    created_at: datetime
+
+
+def _saved_search_out(search: SavedSearch, unseen_count: int) -> SavedSearchOut:
+    field_names = [
+        "deal_type", "property_type", "submarket", "zoning",
+        "building_sf_min", "building_sf_max", "lot_sf_min", "lot_sf_max",
+        "price_per_sf_min", "price_per_sf_max", "price_per_unit_min", "price_per_unit_max",
+        "cap_rate_min", "cap_rate_max", "rate_min", "rate_max",
+    ]
+    understood = {f: getattr(search, f) for f in field_names if getattr(search, f) is not None}
+    return SavedSearchOut(
+        id=search.id,
+        name=search.name,
+        query=search.query,
+        understood=understood,
+        residual_criteria=search.residual_criteria,
+        unseen_count=unseen_count,
+        created_at=search.created_at,
+    )
+
+
+@app.post("/saved-searches", response_model=SavedSearchOut, status_code=201)
+def create_saved_search(body: SavedSearchCreate, user: User = Depends(get_current_user)):
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Name is required")
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+
+    try:
+        parsed = parse_query(body.query)
+    except Exception as e:  # noqa: BLE001 -- surfaced to the caller, not silently swallowed
+        raise HTTPException(status_code=502, detail=f"Couldn't understand that search: {e}")
+
+    with SessionLocal() as session:
+        search = SavedSearch(
+            user_id=user.id,
+            name=body.name.strip(),
+            query=body.query,
+            deal_type=parsed.deal_type,
+            property_type=parsed.property_type,
+            submarket=parsed.submarket,
+            zoning=parsed.zoning,
+            building_sf_min=parsed.building_sf_min,
+            building_sf_max=parsed.building_sf_max,
+            lot_sf_min=parsed.lot_sf_min,
+            lot_sf_max=parsed.lot_sf_max,
+            price_per_sf_min=parsed.price_per_sf_min,
+            price_per_sf_max=parsed.price_per_sf_max,
+            price_per_unit_min=parsed.price_per_unit_min,
+            price_per_unit_max=parsed.price_per_unit_max,
+            cap_rate_min=parsed.cap_rate_min,
+            cap_rate_max=parsed.cap_rate_max,
+            rate_min=parsed.rate_min,
+            rate_max=parsed.rate_max,
+            residual_criteria=parsed.residual_criteria,
+        )
+        session.add(search)
+        session.commit()
+        session.refresh(search)
+        return _saved_search_out(search, unseen_count=0)
+
+
+@app.get("/saved-searches", response_model=list[SavedSearchOut])
+def list_saved_searches(user: User = Depends(get_current_user)):
+    with SessionLocal() as session:
+        searches = session.scalars(
+            select(SavedSearch)
+            .where(SavedSearch.user_id == user.id)
+            .order_by(SavedSearch.created_at.desc())
+        ).all()
+        out = []
+        for search in searches:
+            unseen = session.scalar(
+                select(func.count())
+                .select_from(SavedSearchMatch)
+                .where(
+                    SavedSearchMatch.saved_search_id == search.id,
+                    SavedSearchMatch.seen_at.is_(None),
+                )
+            )
+            out.append(_saved_search_out(search, unseen or 0))
+        return out
+
+
+@app.delete("/saved-searches/{search_id}", status_code=204)
+def delete_saved_search(search_id: str, user: User = Depends(get_current_user)):
+    with SessionLocal() as session:
+        search = session.scalar(
+            select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.user_id == user.id)
+        )
+        if search is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        session.delete(search)
+        session.commit()
+
+
+class SavedSearchMatchOut(BaseModel):
+    id: str
+    deal_type: Literal["sale", "lease"]
+    comp: SaleCompOut | LeaseCompOut
+    seen: bool
+    created_at: datetime
+
+
+@app.get("/saved-searches/{search_id}/matches", response_model=list[SavedSearchMatchOut])
+def list_saved_search_matches(
+    search_id: str,
+    mark_seen: bool = Query(default=True, description="Mark returned matches as seen"),
+    user: User = Depends(get_current_user),
+):
+    with SessionLocal() as session:
+        search = session.scalar(
+            select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.user_id == user.id)
+        )
+        if search is None:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        matches = session.scalars(
+            select(SavedSearchMatch)
+            .where(SavedSearchMatch.saved_search_id == search.id)
+            .order_by(SavedSearchMatch.created_at.desc())
+        ).all()
+
+        out: list[SavedSearchMatchOut] = []
+        newly_seen = False
+        for match in matches:
+            if match.deal_type == DealType.sale:
+                comp = session.get(SaleComp, match.sale_comp_id)
+                comp_out = SaleCompOut.model_validate(comp) if comp else None
+            else:
+                comp = session.get(LeaseComp, match.lease_comp_id)
+                comp_out = LeaseCompOut.model_validate(comp) if comp else None
+            if comp_out is None:
+                # The matched comp was deleted since -- nothing left to show.
+                continue
+            out.append(
+                SavedSearchMatchOut(
+                    id=match.id,
+                    deal_type=match.deal_type.value,
+                    comp=comp_out,
+                    seen=match.seen_at is not None,
+                    created_at=match.created_at,
+                )
+            )
+            if mark_seen and match.seen_at is None:
+                match.seen_at = datetime.utcnow()
+                newly_seen = True
+        if newly_seen:
+            session.commit()
+        return out
 
 
 # --------------------------------------------------------------------------
