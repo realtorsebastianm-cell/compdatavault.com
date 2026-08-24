@@ -21,6 +21,7 @@ from dealarchive.auth import create_access_token, get_current_user, hash_passwor
 from dealarchive.comparison import ComparisonResult, compare_lease_comp, compare_sale_comp
 from dealarchive.config import settings
 from dealarchive.db import SessionLocal
+from dealarchive.export import build_workbook
 from dealarchive.extraction import extract_flyer
 from dealarchive.matching import parse_query, rank_by_residual
 from dealarchive.models import (
@@ -625,6 +626,51 @@ def ask(body: AskRequest, user: User = Depends(get_current_user)):
                 if v is not None and k != "residual_criteria"
             },
             residual_criteria=parsed.residual_criteria,
+        )
+
+
+# --------------------------------------------------------------------------
+# Export -- selected comps to an .xlsx workbook
+# --------------------------------------------------------------------------
+
+
+class ExportRequest(BaseModel):
+    sale_comp_ids: list[str] = []
+    lease_comp_ids: list[str] = []
+
+
+@app.post("/export")
+def export_comps(body: ExportRequest, user: User = Depends(get_current_user)):
+    if not body.sale_comp_ids and not body.lease_comp_ids:
+        raise HTTPException(status_code=400, detail="No comps selected")
+
+    with SessionLocal() as session:
+        sale_comps: list[SaleComp] = []
+        if body.sale_comp_ids:
+            sale_comps = session.scalars(
+                select(SaleComp).where(
+                    SaleComp.id.in_(body.sale_comp_ids), SaleComp.user_id == user.id
+                )
+            ).all()
+
+        lease_comps: list[LeaseComp] = []
+        if body.lease_comp_ids:
+            lease_comps = session.scalars(
+                select(LeaseComp).where(
+                    LeaseComp.id.in_(body.lease_comp_ids), LeaseComp.user_id == user.id
+                )
+            ).all()
+
+        if not sale_comps and not lease_comps:
+            raise HTTPException(status_code=404, detail="None of the selected comps were found")
+
+        workbook_bytes = build_workbook(sale_comps, lease_comps)
+        return Response(
+            content=workbook_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": 'attachment; filename="compdatavault-comps.xlsx"'
+            },
         )
 
 

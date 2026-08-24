@@ -158,6 +158,34 @@ export const api = {
       body: JSON.stringify({ query }),
     }),
 
+  async exportComps(saleCompIds: string[], leaseCompIds: string[]): Promise<void> {
+    const token = getToken();
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+
+    const res = await fetch(`${API_URL}/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        sale_comp_ids: saleCompIds,
+        lease_comp_ids: leaseCompIds,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new ApiError(res.status, body.detail || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "compdatavault-comps.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
   async flyerFileBlobUrl(flyerId: string): Promise<string> {
     const token = getToken();
     const res = await fetch(`${API_URL}/flyers/${flyerId}/file`, {
