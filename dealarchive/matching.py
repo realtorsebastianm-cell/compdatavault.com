@@ -59,6 +59,7 @@ into structured filters over their comp database. Return ONLY a JSON object \
 Rules:
 - "40k SF" means building_sf around 40,000 -- since comps rarely match a number exactly, set building_sf_min to roughly 10% below and building_sf_max to roughly 10% above the stated figure, unless the query gives its own range.
 - A bare number range like "10-18" that isn't clearly SF, price, or a rate belongs in residual_criteria as descriptive text (e.g. "10-18 ft clear height"), not forced into one of the numeric fields above.
+- IMPORTANT: a query about lot size ("3/4 acre lot", "1-2 acre parcel") is describing the lot_sf field, which every property type has -- it is NOT, by itself, a request for property_type="land". Only set property_type="land" when the query explicitly asks for vacant, raw, or undeveloped land as the property type itself (e.g. "vacant land", "raw land parcel", "land for development"). A search for "a 3/4 acre lot" with no other context should set lot_sf_min/lot_sf_max and leave property_type null, matching industrial, retail, office, etc. alongside actual land listings.
 - Only set fields the query actually implies. Leave everything else null.
 - Return valid JSON only.
 """
