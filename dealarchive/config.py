@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,30 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Render's env var editor (and copy/paste in general) makes it easy to
+    # pick up an invisible leading/trailing space or newline along with the
+    # value you meant to paste -- botocore then rejects the resulting R2
+    # endpoint URL as "invalid" with no indication that whitespace is the
+    # culprit. Strip every string setting so a stray space can't cause a
+    # silent, hard-to-diagnose failure like that again.
+    @field_validator(
+        "database_url",
+        "anthropic_api_key",
+        "jwt_secret",
+        "jwt_algorithm",
+        "r2_account_id",
+        "r2_access_key_id",
+        "r2_secret_access_key",
+        "r2_bucket_name",
+        "inbound_base_address",
+        "inbound_webhook_secret",
+        "frontend_url",
+        mode="before",
+    )
+    @classmethod
+    def _strip_whitespace(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
 
 
 settings = Settings()
