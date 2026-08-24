@@ -59,6 +59,37 @@ class User(Base):
     flyers: Mapped[list["Flyer"]] = relationship(back_populates="user")
     sale_comps: Mapped[list["SaleComp"]] = relationship(back_populates="user")
     lease_comps: Mapped[list["LeaseComp"]] = relationship(back_populates="user")
+    authorized_senders: Mapped[list["AuthorizedSender"]] = relationship(back_populates="user")
+
+
+class AuthorizedSender(Base):
+    """A second (third, fourth...) inbox a broker forwards flyers from.
+
+    /ingest/email files a flyer into whichever account's User.email
+    case-insensitively matches the envelope From address -- that only
+    covers the one address a broker signed up with. This table lets a
+    broker register additional inboxes without switching to a login email
+    they don't actually check.
+
+    Email is globally unique (not just per-user): if it weren't, one
+    broker could claim another's real inbox as an "authorized sender" and
+    hijack flyers that broker forwards to the shared inbound address. The
+    verification step (see dealarchive/api.py::_ingest_email's pending-
+    sender check) proves the person adding the address can actually
+    receive mail there before it's trusted for routing -- until then it
+    sits unverified and doesn't affect ingestion at all.
+    """
+
+    __tablename__ = "authorized_senders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    email: Mapped[str] = mapped_column(String, index=True)
+    verification_code: Mapped[str] = mapped_column(String)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped[User] = relationship(back_populates="authorized_senders")
 
 
 class Flyer(Base):

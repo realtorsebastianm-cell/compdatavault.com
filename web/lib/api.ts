@@ -91,6 +91,14 @@ export interface AskResponse {
   residual_criteria: string | null;
 }
 
+export interface AuthorizedSender {
+  id: string;
+  email: string;
+  verified: boolean;
+  verification_code: string | null;
+  created_at: string;
+}
+
 export interface ValueMatch {
   comp: SaleComp | LeaseComp;
   reason: string | null;
@@ -176,6 +184,15 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   me: () => request<{ email: string; forwarding_address: string }>("/me"),
+
+  senders: () => request<AuthorizedSender[]>("/settings/senders"),
+  addSender: (email: string) =>
+    request<AuthorizedSender>("/settings/senders", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  deleteSender: (id: string) =>
+    request<void>(`/settings/senders/${id}`, { method: "DELETE" }),
 
   uploadFlyer: (file: File) => {
     const form = new FormData();

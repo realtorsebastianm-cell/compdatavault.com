@@ -5,9 +5,10 @@ Run locally: uvicorn dealarchive.api:app --reload
 from __future__ import annotations
 
 import re
+import secrets
 from collections import Counter
 from dataclasses import replace as _dataclass_replace
-from datetime import date
+from datetime import date, datetime
 from email import policy
 from email.parser import BytesParser
 from email.utils import parseaddr
@@ -28,6 +29,7 @@ from dealarchive.extraction import extract_flyer
 from dealarchive.matching import parse_query, rank_by_residual
 from dealarchive.valuation import PropertyProfile, parse_property, rank_for_valuation
 from dealarchive.models import (
+    AuthorizedSender,
     DealType,
     ExtractionStatus,
     Flyer,
@@ -115,6 +117,108 @@ def me(user: User = Depends(get_current_user)):
         email=user.email,
         forwarding_address=settings.inbound_base_address or "(inbound email not configured yet)",
     )
+
+
+# --------------------------------------------------------------------------
+# Authorized senders -- additional inboxes a broker forwards flyers from,
+# beyond the one address they signed up with. See dealarchive/models.py::
+# AuthorizedSender and the pending-verification check in /ingest/email.
+# --------------------------------------------------------------------------
+
+
+def _generate_verification_code() -> str:
+    return secrets.token_hex(4).upper()
+
+
+class AddSenderRequest(BaseModel):
+    email: str
+
+
+class AuthorizedSenderOut(BaseModel):
+    id: str
+    email: str
+    verified: bool
+    # Only meaningful (and only returned) while unverified -- once verified
+    # there's nothing left to do with the code.
+    verification_code: str | None
+    created_at: datetime
+
+
+def _sender_out(sender: AuthorizedSender) -> AuthorizedSenderOut:
+    return AuthorizedSenderOut(
+        id=sender.id,
+        email=sender.email,
+        verified=sender.verified_at is not None,
+        verification_code=None if sender.verified_at else sender.verification_code,
+        created_at=sender.created_at,
+    )
+
+
+@app.get("/settings/senders", response_model=list[AuthorizedSenderOut])
+def list_senders(user: User = Depends(get_current_user)):
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(AuthorizedSender)
+            .where(AuthorizedSender.user_id == user.id)
+            .order_by(AuthorizedSender.created_at.desc())
+        ).all()
+        return [_sender_out(r) for r in rows]
+
+
+@app.post("/settings/senders", response_model=AuthorizedSenderOut, status_code=201)
+def add_sender(body: AddSenderRequest, user: User = Depends(get_current_user)):
+    _, email = parseaddr(body.email)
+    if not email:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+
+    with SessionLocal() as session:
+        if email.lower() == user.email.lower():
+            raise HTTPException(
+                status_code=400, detail="That's already your account's primary email"
+            )
+
+        claimed_by_account = session.scalar(
+            select(User).where(func.lower(User.email) == email.lower())
+        )
+        if claimed_by_account is not None:
+            raise HTTPException(
+                status_code=409, detail="That email is already registered to an account"
+            )
+
+        existing = session.scalar(
+            select(AuthorizedSender).where(func.lower(AuthorizedSender.email) == email.lower())
+        )
+        if existing is not None:
+            if existing.user_id != user.id:
+                raise HTTPException(
+                    status_code=409, detail="That email is already linked to a different account"
+                )
+            # Re-adding the same (still-pending, or already-verified) sender
+            # is a no-op that just returns its current state, rather than
+            # generating a second code that'd invalidate the first.
+            return _sender_out(existing)
+
+        sender = AuthorizedSender(
+            user_id=user.id, email=email, verification_code=_generate_verification_code()
+        )
+        session.add(sender)
+        session.commit()
+        session.refresh(sender)
+        return _sender_out(sender)
+
+
+@app.delete("/settings/senders/{sender_id}", status_code=204)
+def delete_sender(sender_id: str, user: User = Depends(get_current_user)):
+    with SessionLocal() as session:
+        sender = session.scalar(
+            select(AuthorizedSender).where(
+                AuthorizedSender.id == sender_id, AuthorizedSender.user_id == user.id
+            )
+        )
+        if sender is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        session.delete(sender)
+        session.commit()
 
 
 # --------------------------------------------------------------------------
@@ -369,20 +473,46 @@ async def ingest_email(
     if _sender_auth_status(parsed_message) == "fail":
         raise HTTPException(status_code=403, detail="Sender failed SPF/DKIM verification")
 
-    attachments: list[tuple[bytes, str, str]] = []
-    for part in parsed_message.iter_attachments():
-        content = part.get_content()
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-        attachments.append((content, part.get_filename() or "flyer", part.get_content_type()))
-
-    if not attachments:
-        raise HTTPException(status_code=400, detail="No attachments on this email")
-
     with SessionLocal() as session:
+        # A pending authorized-sender verification: a broker adds a second
+        # inbox in Settings, gets a one-time code, and proves they can
+        # receive mail there by sending anything to the shared inbound
+        # address with that code in the subject. Checked before the
+        # attachments requirement below, since a verification email
+        # legitimately has none.
+        pending = session.scalar(
+            select(AuthorizedSender).where(
+                func.lower(AuthorizedSender.email) == sender_email.lower(),
+                AuthorizedSender.verified_at.is_(None),
+            )
+        )
+        if pending is not None and pending.verification_code.lower() in subject.lower():
+            pending.verified_at = datetime.utcnow()
+            session.commit()
+            return []
+
+        attachments: list[tuple[bytes, str, str]] = []
+        for part in parsed_message.iter_attachments():
+            content = part.get_content()
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            attachments.append((content, part.get_filename() or "flyer", part.get_content_type()))
+
+        if not attachments:
+            raise HTTPException(status_code=400, detail="No attachments on this email")
+
         user = session.scalar(
             select(User).where(func.lower(User.email) == sender_email.lower())
         )
+        if user is None:
+            verified_sender = session.scalar(
+                select(AuthorizedSender).where(
+                    func.lower(AuthorizedSender.email) == sender_email.lower(),
+                    AuthorizedSender.verified_at.is_not(None),
+                )
+            )
+            if verified_sender is not None:
+                user = session.get(User, verified_sender.user_id)
         if user is None:
             # No matching account -- nothing auto-replies on our behalf, so
             # a "sign up first" / "forward from your account email" bounce
@@ -390,7 +520,7 @@ async def ingest_email(
             # later.
             raise HTTPException(
                 status_code=404,
-                detail="No account matches this sender address -- forward from the email you signed up with",
+                detail="No account matches this sender address -- forward from the email you signed up with, or add it as an authorized sender in Settings first",
             )
 
         results = []
