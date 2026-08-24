@@ -23,6 +23,8 @@ export default function LeaseVaultPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -64,6 +66,29 @@ export default function LeaseVaultPage() {
     }
   }
 
+  async function handleBulkDelete() {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    const ids = [...selected];
+    const results = await Promise.allSettled(ids.map((id) => api.deleteLeaseComp(id)));
+    const deletedIds = new Set(ids.filter((_, i) => results[i].status === "fulfilled"));
+    const failedCount = ids.length - deletedIds.size;
+
+    setComps((prev) => prev.filter((c) => !deletedIds.has(c.id)));
+    setSelected((prev) => new Set([...prev].filter((id) => !deletedIds.has(id))));
+    if (failedCount > 0) {
+      setError(
+        `${failedCount} of ${ids.length} comp${ids.length === 1 ? "" : "s"} couldn't be deleted -- try again`
+      );
+    }
+    setConfirmingDelete(false);
+    setDeleting(false);
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
       <div className="flex items-center justify-between">
@@ -79,6 +104,24 @@ export default function LeaseVaultPage() {
               className="border border-line px-4 py-2 text-sm font-medium text-foreground hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               {exporting ? "exporting..." : `export_${selected.size}`}
+            </button>
+          )}
+          {selected.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              onBlur={() => setConfirmingDelete(false)}
+              disabled={deleting}
+              className={`border px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                confirmingDelete
+                  ? "border-red-400 bg-red-400 text-background hover:bg-transparent hover:text-red-400"
+                  : "border-line text-dim hover:border-red-400 hover:text-red-400"
+              }`}
+            >
+              {deleting
+                ? "deleting..."
+                : confirmingDelete
+                  ? "confirm_delete?"
+                  : `delete_${selected.size}`}
             </button>
           )}
           <Link
