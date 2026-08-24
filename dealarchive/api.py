@@ -5,6 +5,8 @@ Run locally: uvicorn dealarchive.api:app --reload
 from __future__ import annotations
 
 import re
+from collections import Counter
+from dataclasses import replace as _dataclass_replace
 from datetime import date
 from email import policy
 from email.parser import BytesParser
@@ -24,6 +26,7 @@ from dealarchive.db import SessionLocal
 from dealarchive.export import build_workbook
 from dealarchive.extraction import extract_flyer
 from dealarchive.matching import parse_query, rank_by_residual
+from dealarchive.valuation import parse_property, rank_for_valuation
 from dealarchive.models import (
     DealType,
     ExtractionStatus,
@@ -33,7 +36,7 @@ from dealarchive.models import (
     SaleComp,
     User,
 )
-from dealarchive.storage import read_flyer_file, save_flyer_file
+from dealarchive.storage import delete_flyer_file, read_flyer_file, save_flyer_file
 
 app = FastAPI(title="Deal Archive API")
 
@@ -127,6 +130,11 @@ class ComparisonOut(BaseModel):
     comp_count: int
 
 
+class PossibleDuplicateOut(BaseModel):
+    comp_id: str
+    address: str
+
+
 class FlyerResult(BaseModel):
     flyer_id: str
     deal_type: Literal["sale", "lease"] | None
@@ -134,6 +142,7 @@ class FlyerResult(BaseModel):
     comp_id: str | None = None
     low_confidence_fields: list[str] = []
     comparison: ComparisonOut | None = None
+    possible_duplicate: PossibleDuplicateOut | None = None
     error: str | None = None
 
 
@@ -142,6 +151,35 @@ def _to_property_type(value: str | None) -> PropertyType:
         return PropertyType(value) if value else PropertyType.other
     except ValueError:
         return PropertyType.other
+
+
+def _normalize_address(address: str) -> str:
+    """Collapse an address down to just its alphanumerics for duplicate
+    matching -- "123 Main St." vs "123 Main St" vs "123  main st" should
+    all normalize the same way. Deliberately not fuzzy (no edit-distance,
+    no abbreviation expansion): an exact normalized match is a strong
+    signal a broker's own comp vault has the same property twice, while a
+    fuzzy match risks false positives on genuinely different addresses
+    (e.g. "123 Main St Unit A" vs "123 Main St Unit B")."""
+    cleaned = re.sub(r"[^a-z0-9]+", " ", address.lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _find_duplicate(session, model, user_id: str, address: str):
+    """Best-effort duplicate lookup within one broker's vault. Fetches that
+    broker's existing comps of this deal type and compares normalized
+    addresses in Python rather than in SQL -- a broker's vault is small
+    enough (hundreds, not millions, of comps) that this is simpler and more
+    reliable than a portable SQL-side normalization, and it keeps the
+    matching logic in one place shared with nothing else."""
+    normalized = _normalize_address(address)
+    if not normalized:
+        return None
+    existing = session.scalars(select(model).where(model.user_id == user_id)).all()
+    for candidate in existing:
+        if _normalize_address(candidate.address) == normalized:
+            return candidate
+    return None
 
 
 def _process_flyer(session, user: User, content: bytes, filename: str, content_type: str, source: str, sender_email: str | None) -> FlyerResult:
@@ -174,8 +212,12 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
     fields = result.fields
     comparison: ComparisonResult | None = None
     comp_id: str | None = None
+    address = fields.get("address") or "Unknown address"
+    duplicate = None
 
     if result.deal_type == "sale":
+        if address != "Unknown address":
+            duplicate = _find_duplicate(session, SaleComp, user.id, address)
         building_sf = fields.get("building_sf")
         price = fields.get("price")
         price_per_sf = (price / building_sf) if price and building_sf else None
@@ -184,7 +226,7 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
         comp = SaleComp(
             user_id=user.id,
             flyer_id=flyer.id,
-            address=fields.get("address") or "Unknown address",
+            address=address,
             city=fields.get("city"),
             state=fields.get("state"),
             submarket=fields.get("submarket"),
@@ -200,16 +242,19 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             broker_name=fields.get("broker_name"),
             brokerage=fields.get("brokerage"),
             notes=fields.get("notes"),
+            duplicate_of_id=duplicate.id if duplicate else None,
         )
         session.add(comp)
         session.flush()
         comparison = compare_sale_comp(session, user.id, comp)
         comp_id = comp.id
     else:
+        if address != "Unknown address":
+            duplicate = _find_duplicate(session, LeaseComp, user.id, address)
         comp = LeaseComp(
             user_id=user.id,
             flyer_id=flyer.id,
-            address=fields.get("address") or "Unknown address",
+            address=address,
             city=fields.get("city"),
             state=fields.get("state"),
             submarket=fields.get("submarket"),
@@ -224,6 +269,7 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             broker_name=fields.get("broker_name"),
             brokerage=fields.get("brokerage"),
             notes=fields.get("notes"),
+            duplicate_of_id=duplicate.id if duplicate else None,
         )
         session.add(comp)
         session.flush()
@@ -239,6 +285,11 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
         comp_id=comp_id,
         low_confidence_fields=result.low_confidence_fields,
         comparison=ComparisonOut(**comparison.__dict__) if comparison else None,
+        possible_duplicate=(
+            PossibleDuplicateOut(comp_id=duplicate.id, address=duplicate.address)
+            if duplicate
+            else None
+        ),
     )
 
 
@@ -383,6 +434,7 @@ class SaleCompOut(BaseModel):
     brokerage: str | None
     date_received: date
     notes: str | None
+    duplicate_of_id: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -406,6 +458,7 @@ class LeaseCompOut(BaseModel):
     brokerage: str | None
     date_received: date
     notes: str | None
+    duplicate_of_id: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -492,6 +545,50 @@ def get_lease_comp(comp_id: str, user: User = Depends(get_current_user)):
         if comp is None:
             raise HTTPException(status_code=404, detail="Not found")
         return comp
+
+
+def _delete_comp(session, comp) -> None:
+    """Delete a comp, its parent flyer row, and the flyer's raw file in R2.
+
+    A comp's flyer_id is unique (one flyer -> at most one comp), so the
+    flyer row exists only to serve this comp and is safe to remove with
+    it. Storage deletion is best-effort: if R2 is unreachable or the
+    object's already gone, that shouldn't block removing the comp from the
+    vault, since the broker's intent here is "get this out of my vault,"
+    not "prove the file was deleted."
+    """
+    flyer = session.get(Flyer, comp.flyer_id)
+    session.delete(comp)
+    if flyer is not None:
+        session.delete(flyer)
+    session.commit()
+    if flyer is not None:
+        try:
+            delete_flyer_file(flyer.storage_path)
+        except Exception:  # noqa: BLE001 -- storage cleanup is best-effort
+            pass
+
+
+@app.delete("/sale-comps/{comp_id}", status_code=204)
+def delete_sale_comp(comp_id: str, user: User = Depends(get_current_user)):
+    with SessionLocal() as session:
+        comp = session.scalar(
+            select(SaleComp).where(SaleComp.id == comp_id, SaleComp.user_id == user.id)
+        )
+        if comp is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        _delete_comp(session, comp)
+
+
+@app.delete("/lease-comps/{comp_id}", status_code=204)
+def delete_lease_comp(comp_id: str, user: User = Depends(get_current_user)):
+    with SessionLocal() as session:
+        comp = session.scalar(
+            select(LeaseComp).where(LeaseComp.id == comp_id, LeaseComp.user_id == user.id)
+        )
+        if comp is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        _delete_comp(session, comp)
 
 
 # --------------------------------------------------------------------------
@@ -626,6 +723,171 @@ def ask(body: AskRequest, user: User = Depends(get_current_user)):
                 if v is not None and k != "residual_criteria"
             },
             residual_criteria=parsed.residual_criteria,
+        )
+
+
+# --------------------------------------------------------------------------
+# Valuation matcher -- paste your own property, get matched to the best
+# comps in your vault plus a rough estimate.
+# --------------------------------------------------------------------------
+
+VALUE_CANDIDATE_LIMIT = 60
+# A valuation needs enough comps to average across, not just the single
+# closest match -- generous window on purpose, wider than Ask AI's search
+# filters.
+VALUE_SF_WINDOW_PCT = 0.35
+VALUE_ESTIMATE_SAMPLE = 8
+
+
+class ValueRequest(BaseModel):
+    description: str
+    deal_type: Literal["sale", "lease"]
+
+
+class ValueMatch(BaseModel):
+    comp: SaleCompOut | LeaseCompOut
+    reason: str | None = None
+
+
+class ValueEstimate(BaseModel):
+    metric: Literal["price_per_sf", "rate"]
+    low: float
+    high: float
+    average: float
+    based_on: int
+    rate_type: str | None = None
+
+
+class ValueResponse(BaseModel):
+    understood: dict
+    matches: list[ValueMatch]
+    estimate: ValueEstimate | None = None
+    narrowed_by: list[str]
+
+
+def _value_candidates(session, model, user_id, profile, property_type_enum, narrowed_by):
+    stmt = select(model).where(model.user_id == user_id)
+    if property_type_enum is not None:
+        stmt = stmt.where(model.property_type == property_type_enum)
+        narrowed_by.append("property_type")
+    if profile.submarket:
+        stmt = stmt.where(model.submarket.ilike(f"%{profile.submarket}%"))
+        narrowed_by.append("submarket")
+    if profile.building_sf:
+        low = profile.building_sf * (1 - VALUE_SF_WINDOW_PCT)
+        high = profile.building_sf * (1 + VALUE_SF_WINDOW_PCT)
+        stmt = stmt.where(model.building_sf.between(low, high))
+        narrowed_by.append("building_sf")
+    stmt = stmt.order_by(model.date_received.desc()).limit(VALUE_CANDIDATE_LIMIT)
+    return session.scalars(stmt).all()
+
+
+@app.post("/value", response_model=ValueResponse)
+def value_property(body: ValueRequest, user: User = Depends(get_current_user)):
+    """A broker pastes in a description of a property they're valuing;
+    this matches it against their own vault and returns the comps that
+    best support a value, plus a rough estimate computed from them. See
+    dealarchive/valuation.py for the parse/rank design -- same two-stage
+    shape as /ask, but oriented at "give me a defensible comp set" rather
+    than "find the one thing I described"."""
+    if not body.description.strip():
+        raise HTTPException(status_code=400, detail="Property description is required")
+
+    try:
+        profile = parse_property(body.description)
+    except Exception as e:  # noqa: BLE001 -- surfaced to the caller, not silently swallowed
+        raise HTTPException(status_code=502, detail=f"Couldn't understand that description: {e}")
+
+    property_type_enum = None
+    if profile.property_type:
+        try:
+            property_type_enum = PropertyType(profile.property_type)
+        except ValueError:
+            property_type_enum = None
+
+    model = SaleComp if body.deal_type == "sale" else LeaseComp
+
+    with SessionLocal() as session:
+        narrowed_by: list[str] = []
+        candidates = _value_candidates(session, model, user.id, profile, property_type_enum, narrowed_by)
+
+        # Too few comps to average across a valuation off of -- widen by
+        # dropping submarket first (a $/SF estimate leans more on size and
+        # property type than on submarket), then drop property_type/SF too
+        # rather than return nothing.
+        if len(candidates) < 3 and profile.submarket:
+            narrowed_by = []
+            loosened_profile = _dataclass_replace(profile, submarket=None)
+            candidates = _value_candidates(session, model, user.id, loosened_profile, property_type_enum, narrowed_by)
+        if len(candidates) < 3:
+            narrowed_by = []
+            stmt = select(model).where(model.user_id == user.id).order_by(model.date_received.desc()).limit(VALUE_CANDIDATE_LIMIT)
+            broadened = session.scalars(stmt).all()
+            if len(broadened) > len(candidates):
+                candidates = broadened
+
+        reason_by_id: dict[str, str] = {}
+        if profile.notes_summary and candidates:
+            payload = [{"id": c.id, "address": c.address, "notes": c.notes or ""} for c in candidates]
+            try:
+                ranked = rank_for_valuation(profile.notes_summary, payload)
+            except Exception:  # noqa: BLE001 -- fall back to the unranked candidate set
+                ranked = []
+            if ranked:
+                reason_by_id = {m.comp_id: m.reason for m in ranked}
+                order = {m.comp_id: i for i, m in enumerate(ranked)}
+                ranked_ids = set(reason_by_id)
+                candidates = sorted(
+                    (c for c in candidates if c.id in ranked_ids),
+                    key=lambda c: order[c.id],
+                )
+
+        out_model = SaleCompOut if body.deal_type == "sale" else LeaseCompOut
+        matches = [
+            ValueMatch(comp=out_model.model_validate(c), reason=reason_by_id.get(c.id))
+            for c in candidates
+        ]
+
+        estimate = None
+        rate_type_out: str | None = None
+        if body.deal_type == "sale":
+            sample = candidates[:VALUE_ESTIMATE_SAMPLE]
+            values = [float(c.price_per_sf) for c in sample if c.price_per_sf]
+            metric: Literal["price_per_sf", "rate"] = "price_per_sf"
+        else:
+            # $/SF/yr, $/SF/mo, and flat $/mo aren't comparable numbers --
+            # averaging across rate types would silently produce a
+            # meaningless figure. Instead, average only within whichever
+            # rate type is most common among the ranked candidates, and
+            # report which one so the UI can label it correctly.
+            with_rate = [c for c in candidates if c.rate and c.rate_type]
+            metric = "rate"
+            if with_rate:
+                dominant_type = Counter(c.rate_type for c in with_rate).most_common(1)[0][0]
+                rate_type_out = dominant_type.value
+                same_type = [c for c in with_rate if c.rate_type == dominant_type]
+                values = [float(c.rate) for c in same_type[:VALUE_ESTIMATE_SAMPLE]]
+            else:
+                values = []
+        if values:
+            estimate = ValueEstimate(
+                metric=metric,
+                low=min(values),
+                high=max(values),
+                average=sum(values) / len(values),
+                based_on=len(values),
+                rate_type=rate_type_out,
+            )
+
+        return ValueResponse(
+            understood={
+                k: v
+                for k, v in profile.__dict__.items()
+                if v is not None and k != "notes_summary"
+            },
+            matches=matches,
+            estimate=estimate,
+            narrowed_by=narrowed_by,
         )
 
 

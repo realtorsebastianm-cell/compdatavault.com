@@ -51,3 +51,11 @@ def read_flyer_file(storage_path: str) -> bytes:
     """
     obj = _client().get_object(Bucket=settings.r2_bucket_name, Key=storage_path)
     return obj["Body"].read()
+
+
+def delete_flyer_file(storage_path: str) -> None:
+    """Delete a stored flyer object. S3-compatible delete_object doesn't
+    error on a missing key, so callers don't need to check existence first
+    -- deleting a comp whose file is already gone from R2 is a no-op here,
+    not a failure."""
+    _client().delete_object(Bucket=settings.r2_bucket_name, Key=storage_path)

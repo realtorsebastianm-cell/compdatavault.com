@@ -30,6 +30,7 @@ export interface SaleComp {
   brokerage: string | null;
   date_received: string;
   notes: string | null;
+  duplicate_of_id: string | null;
 }
 
 export interface LeaseComp {
@@ -51,6 +52,7 @@ export interface LeaseComp {
   brokerage: string | null;
   date_received: string;
   notes: string | null;
+  duplicate_of_id: string | null;
 }
 
 export interface ComparisonOut {
@@ -61,6 +63,11 @@ export interface ComparisonOut {
   comp_count: number;
 }
 
+export interface PossibleDuplicateOut {
+  comp_id: string;
+  address: string;
+}
+
 export interface FlyerResult {
   flyer_id: string;
   deal_type: DealType | null;
@@ -68,6 +75,7 @@ export interface FlyerResult {
   comp_id: string | null;
   low_confidence_fields: string[];
   comparison: ComparisonOut | null;
+  possible_duplicate: PossibleDuplicateOut | null;
   error: string | null;
 }
 
@@ -81,6 +89,27 @@ export interface AskResponse {
   matches: AskMatch[];
   understood: Record<string, unknown>;
   residual_criteria: string | null;
+}
+
+export interface ValueMatch {
+  comp: SaleComp | LeaseComp;
+  reason: string | null;
+}
+
+export interface ValueEstimate {
+  metric: "price_per_sf" | "rate";
+  low: number;
+  high: number;
+  average: number;
+  based_on: number;
+  rate_type: string | null;
+}
+
+export interface ValueResponse {
+  understood: Record<string, unknown>;
+  matches: ValueMatch[];
+  estimate: ValueEstimate | null;
+  narrowed_by: string[];
 }
 
 const TOKEN_KEY = "dealarchive_token";
@@ -151,11 +180,21 @@ export const api = {
     request<LeaseComp[]>(`/lease-comps?${new URLSearchParams(params)}`),
   saleComp: (id: string) => request<SaleComp>(`/sale-comps/${id}`),
   leaseComp: (id: string) => request<LeaseComp>(`/lease-comps/${id}`),
+  deleteSaleComp: (id: string) =>
+    request<void>(`/sale-comps/${id}`, { method: "DELETE" }),
+  deleteLeaseComp: (id: string) =>
+    request<void>(`/lease-comps/${id}`, { method: "DELETE" }),
 
   ask: (query: string) =>
     request<AskResponse>("/ask", {
       method: "POST",
       body: JSON.stringify({ query }),
+    }),
+
+  value: (description: string, dealType: DealType) =>
+    request<ValueResponse>("/value", {
+      method: "POST",
+      body: JSON.stringify({ description, deal_type: dealType }),
     }),
 
   async exportComps(saleCompIds: string[], leaseCompIds: string[]): Promise<void> {

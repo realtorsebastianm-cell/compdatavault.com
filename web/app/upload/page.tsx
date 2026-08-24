@@ -133,6 +133,19 @@ function ResultCard({ result }: { result: FlyerResult }) {
           (avg {result.comparison.baseline_avg.toLocaleString()}).
         </p>
       )}
+
+      {result.possible_duplicate && (
+        <p className="mt-2 text-amber-400">
+          Possible duplicate of{" "}
+          <Link
+            href={`/comps?type=${result.deal_type}&id=${result.possible_duplicate.comp_id}`}
+            className="underline hover:text-amber-300"
+          >
+            {result.possible_duplicate.address}
+          </Link>{" "}
+          already in your vault.
+        </p>
+      )}
     </div>
   );
 }

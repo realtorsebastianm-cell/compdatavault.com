@@ -145,6 +145,14 @@ export default function SaleVaultPage() {
                     >
                       {c.address}
                     </Link>
+                    {c.duplicate_of_id && (
+                      <span
+                        className="ml-2 border border-amber-400/60 px-1 py-0.5 text-[10px] uppercase tracking-wide text-amber-400"
+                        title="Possible duplicate of another comp in your vault"
+                      >
+                        dup
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-4">{c.submarket ?? "—"}</td>
                   <td className="py-2 pr-4 capitalize">{c.property_type}</td>

@@ -134,6 +134,14 @@ class SaleComp(Base):
     date_received: Mapped[date] = mapped_column(Date, default=date.today)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Set at ingestion time when this comp's address normalizes to match a
+    # comp already in the same broker's vault -- see
+    # dealarchive/api.py::_find_duplicate. Self-referencing, nullable, and
+    # SET NULL on delete so removing the original never blocks or cascades.
+    duplicate_of_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sale_comps.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped[User] = relationship(back_populates="sale_comps")
@@ -168,6 +176,10 @@ class LeaseComp(Base):
     brokerage: Mapped[str | None] = mapped_column(String, nullable=True)
     date_received: Mapped[date] = mapped_column(Date, default=date.today)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    duplicate_of_id: Mapped[str | None] = mapped_column(
+        ForeignKey("lease_comps.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

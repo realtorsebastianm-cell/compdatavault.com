@@ -1,7 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, type LeaseComp, type SaleComp } from "@/lib/api";
 import Cursor from "@/components/Cursor";
 
@@ -15,12 +16,16 @@ export default function CompDetailPage() {
 
 function CompDetail() {
   const params = useSearchParams();
+  const router = useRouter();
   const type = params.get("type");
   const id = params.get("id");
 
   const [comp, setComp] = useState<SaleComp | LeaseComp | null>(null);
   const [flyerUrl, setFlyerUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!type || !id) return;
@@ -55,12 +60,44 @@ function CompDetail() {
   const sale = isSale ? (comp as SaleComp) : null;
   const lease = !isSale ? (comp as LeaseComp) : null;
 
+  async function handleDelete() {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      if (isSale) await api.deleteSaleComp(id!);
+      else await api.deleteLeaseComp(id!);
+      router.push(isSale ? "/sale" : "/lease");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  }
+
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-6 py-10 lg:grid-cols-2">
       <div>
-        <p className="text-xs uppercase tracking-wide text-dim">
-          {isSale ? "Sale comp" : "Lease comp"}
-        </p>
+        <div className="flex items-start justify-between">
+          <p className="text-xs uppercase tracking-wide text-dim">
+            {isSale ? "Sale comp" : "Lease comp"}
+          </p>
+          <button
+            onClick={handleDelete}
+            onBlur={() => setConfirmingDelete(false)}
+            disabled={deleting}
+            className={`border px-3 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+              confirmingDelete
+                ? "border-red-400 bg-red-400 text-background hover:bg-transparent hover:text-red-400"
+                : "border-line text-dim hover:border-red-400 hover:text-red-400"
+            }`}
+          >
+            {deleting ? "deleting..." : confirmingDelete ? "confirm_delete?" : "delete"}
+          </button>
+        </div>
         <h1 className="mt-1 flex items-center text-xl font-medium">
           {comp.address}
           <Cursor className="ml-2" />
@@ -68,6 +105,19 @@ function CompDetail() {
         <p className="mt-1 text-sm text-dim">
           {[comp.city, comp.state].filter(Boolean).join(", ")}
         </p>
+
+        {comp.duplicate_of_id && (
+          <p className="mt-3 border border-amber-400/60 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-400">
+            Possible duplicate of{" "}
+            <Link
+              href={`/comps?type=${type}&id=${comp.duplicate_of_id}`}
+              className="underline hover:text-amber-300"
+            >
+              another comp
+            </Link>{" "}
+            already in your vault.
+          </p>
+        )}
 
         <dl className="mt-6 grid grid-cols-2 gap-y-4 text-sm">
           <Field label="Submarket" value={comp.submarket ?? "—"} />
@@ -124,6 +174,8 @@ function CompDetail() {
           <Field label="Broker" value={comp.broker_name ?? "—"} />
           <Field label="Brokerage" value={comp.brokerage ?? "—"} />
         </dl>
+
+        {deleteError && <p className="mt-6 text-sm text-red-400">{deleteError}</p>}
 
         {comp.notes && (
           <div className="mt-6">
