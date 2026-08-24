@@ -13,6 +13,20 @@ from openpyxl.utils import get_column_letter
 
 from dealarchive.models import LeaseComp, SaleComp
 
+# Cell values that start with one of these are treated as a formula by
+# Excel/Sheets/LibreOffice. Notes come from LLM extraction of a flyer's
+# text -- content ultimately sourced from a document a third party
+# produced -- so a value starting with one of these can't be trusted not
+# to be interpreted as a formula when the workbook is opened. Standard
+# mitigation: force it to render as plain text with a leading apostrophe.
+_FORMULA_TRIGGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_cell_value(value):
+    if isinstance(value, str) and value.startswith(_FORMULA_TRIGGER_PREFIXES):
+        return "'" + value
+    return value
+
 SALE_COLUMNS = [
     ("Address", lambda c: c.address),
     ("City", lambda c: c.city),
@@ -61,7 +75,7 @@ def _write_sheet(ws, columns, comps) -> None:
 
     for row_idx, comp in enumerate(comps, start=2):
         for col_idx, (_, getter) in enumerate(columns, start=1):
-            value = getter(comp)
+            value = _sanitize_cell_value(getter(comp))
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             if isinstance(value, str) and len(value) > 40:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
