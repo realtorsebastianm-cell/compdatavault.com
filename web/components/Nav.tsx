@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import Cursor from "./Cursor";
 
 const LINKS = [
   { href: "/sale", label: "Sale" },
@@ -24,7 +23,6 @@ export default function Nav() {
           className="flex items-center gap-2 font-serif text-lg font-bold tracking-tight"
         >
           Comp<span className="text-accent">Data</span>Vault
-          <Cursor />
         </Link>
 
         {!loading && email && (

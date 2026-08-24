@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import Cursor from "@/components/Cursor";
 
 export default function LandingPage() {
   const { email, loading } = useAuth();
@@ -16,7 +15,6 @@ export default function LandingPage() {
         Forward your flyers.
         <br />
         Get instant comps.
-        <Cursor className="ml-2" />
       </h1>
       <p className="mt-6 max-w-xl text-base text-dim">
         CompDataVault reads every sale and lease flyer that lands in your
