@@ -37,7 +37,9 @@ You are reading a commercial real estate flyer. Return ONLY a JSON object \
   "state": string | null,
   "submarket": string | null,
   "property_type": "office" | "industrial" | "retail" | "land" | "multifamily" | "other",
-  "size_sf": number | null,
+  "building_sf": number | null,  // building/improvement square footage
+  "lot_sf": number | null,  // land/lot square footage -- convert acres to SF (1 acre = 43,560 SF) if that's what's listed
+  "zoning": string | null,  // e.g. "M-1", "I-2", "C-3" -- whatever's on the flyer, any property type
   "broker_name": string | null,
   "brokerage": string | null,
   "notes": string | null,
@@ -45,6 +47,7 @@ You are reading a commercial real estate flyer. Return ONLY a JSON object \
   // sale only, null if deal_type is "lease"
   "price": number | null,
   "cap_rate": number | null,
+  "num_units": number | null,  // multifamily sale comps -- total unit count, if listed
 
   // lease only, null if deal_type is "sale"
   "rate": number | null,
@@ -58,7 +61,7 @@ You are reading a commercial real estate flyer. Return ONLY a JSON object \
 Rules:
 - deal_type is required: decide sale vs lease from context (asking price vs. asking rate, "for sale" vs "for lease", cap rate presence, etc).
 - Never fabricate a number. If a field isn't on the flyer or you're unsure, set it null AND add its name to low_confidence_fields.
-- size_sf is total square footage as a plain number (no commas, no "SF" suffix).
+- building_sf and lot_sf are plain numbers (no commas, no "SF"/"acres" suffix). Land/lot size is frequently given in acres on flyers -- convert to square feet.
 - price and rate are plain numbers (no "$", no commas).
 - Return valid JSON only.
 """

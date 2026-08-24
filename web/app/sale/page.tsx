@@ -41,7 +41,7 @@ export default function SaleVaultPage() {
       </div>
 
       <div className="mt-6">
-        <VaultFilters filters={filters} onChange={setFilters} />
+        <VaultFilters filters={filters} onChange={setFilters} dealType="sale" />
       </div>
 
       {error && <p className="mt-6 text-sm text-red-400">{error}</p>}
@@ -60,10 +60,13 @@ export default function SaleVaultPage() {
                 <th className="py-2 pr-4">Address</th>
                 <th className="py-2 pr-4">Submarket</th>
                 <th className="py-2 pr-4">Type</th>
-                <th className="py-2 pr-4">SF</th>
+                <th className="py-2 pr-4">Building SF</th>
+                <th className="py-2 pr-4">Lot SF</th>
                 <th className="py-2 pr-4">Price</th>
                 <th className="py-2 pr-4">$/SF</th>
+                <th className="py-2 pr-4">$/Unit</th>
                 <th className="py-2 pr-4">Cap rate</th>
+                <th className="py-2 pr-4">Zoning</th>
                 <th className="py-2 pr-4">Date</th>
               </tr>
             </thead>
@@ -84,7 +87,10 @@ export default function SaleVaultPage() {
                   <td className="py-2 pr-4">{c.submarket ?? "—"}</td>
                   <td className="py-2 pr-4 capitalize">{c.property_type}</td>
                   <td className="py-2 pr-4">
-                    {c.size_sf ? c.size_sf.toLocaleString() : "—"}
+                    {c.building_sf ? c.building_sf.toLocaleString() : "—"}
+                  </td>
+                  <td className="py-2 pr-4">
+                    {c.lot_sf ? c.lot_sf.toLocaleString() : "—"}
                   </td>
                   <td className="py-2 pr-4">
                     {c.price ? `$${c.price.toLocaleString()}` : "—"}
@@ -93,8 +99,12 @@ export default function SaleVaultPage() {
                     {c.price_per_sf ? `$${c.price_per_sf.toFixed(2)}` : "—"}
                   </td>
                   <td className="py-2 pr-4">
+                    {c.price_per_unit ? `$${c.price_per_unit.toLocaleString()}` : "—"}
+                  </td>
+                  <td className="py-2 pr-4">
                     {c.cap_rate ? `${c.cap_rate}%` : "—"}
                   </td>
+                  <td className="py-2 pr-4">{c.zoning ?? "—"}</td>
                   <td className="py-2 pr-4">{c.date_received}</td>
                 </tr>
               ))}

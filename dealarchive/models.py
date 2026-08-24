@@ -109,10 +109,25 @@ class SaleComp(Base):
         Enum(PropertyType), default=PropertyType.other, index=True
     )
 
-    size_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    # Kept separate on purpose -- building_sf drives price_per_sf, lot_sf
+    # doesn't (an industrial building on a 2-acre lot and one on a 5-acre
+    # lot with the same building size are not comparable the same way).
+    building_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    lot_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     price: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     price_per_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     cap_rate: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+
+    # Multifamily sale comps are usually evaluated on a per-unit basis
+    # rather than per-SF -- num_units comes off the flyer, price_per_unit is
+    # computed the same way price_per_sf is (price / num_units).
+    num_units: Mapped[int | None] = mapped_column(Numeric, nullable=True)
+    price_per_unit: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+
+    # Zoning matters most for industrial/land comps but isn't exclusive to
+    # them, so it's on every sale comp -- just null when the flyer doesn't
+    # list it.
+    zoning: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     broker_name: Mapped[str | None] = mapped_column(String, nullable=True)
     brokerage: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -140,11 +155,14 @@ class LeaseComp(Base):
         Enum(PropertyType), default=PropertyType.other, index=True
     )
 
-    size_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    building_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    lot_sf: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     rate: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     rate_type: Mapped[RateType | None] = mapped_column(Enum(RateType), nullable=True)
     term_months: Mapped[int | None] = mapped_column(Numeric, nullable=True)
     expense_type: Mapped[ExpenseType] = mapped_column(Enum(ExpenseType), default=ExpenseType.unknown)
+
+    zoning: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     broker_name: Mapped[str | None] = mapped_column(String, nullable=True)
     brokerage: Mapped[str | None] = mapped_column(String, nullable=True)

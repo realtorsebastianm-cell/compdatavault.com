@@ -73,9 +73,14 @@ function CompDetail() {
           <Field label="Submarket" value={comp.submarket ?? "—"} />
           <Field label="Property type" value={comp.property_type} className="capitalize" />
           <Field
-            label="Size"
-            value={comp.size_sf ? `${comp.size_sf.toLocaleString()} SF` : "—"}
+            label="Building size"
+            value={comp.building_sf ? `${comp.building_sf.toLocaleString()} SF` : "—"}
           />
+          <Field
+            label="Lot size"
+            value={comp.lot_sf ? `${comp.lot_sf.toLocaleString()} SF` : "—"}
+          />
+          <Field label="Zoning" value={comp.zoning ?? "—"} />
           <Field label="Date received" value={comp.date_received} />
 
           {sale && (
@@ -86,6 +91,15 @@ function CompDetail() {
                 value={sale.price_per_sf ? `$${sale.price_per_sf.toFixed(2)}` : "—"}
               />
               <Field label="Cap rate" value={sale.cap_rate ? `${sale.cap_rate}%` : "—"} />
+              {sale.num_units != null && (
+                <Field label="Units" value={sale.num_units.toLocaleString()} />
+              )}
+              {sale.price_per_unit != null && (
+                <Field
+                  label="Price / unit"
+                  value={`$${sale.price_per_unit.toLocaleString()}`}
+                />
+              )}
             </>
           )}
 

@@ -164,9 +164,11 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
     comp_id: str | None = None
 
     if result.deal_type == "sale":
-        size_sf = fields.get("size_sf")
+        building_sf = fields.get("building_sf")
         price = fields.get("price")
-        price_per_sf = (price / size_sf) if price and size_sf else None
+        price_per_sf = (price / building_sf) if price and building_sf else None
+        num_units = fields.get("num_units")
+        price_per_unit = (price / num_units) if price and num_units else None
         comp = SaleComp(
             user_id=user.id,
             flyer_id=flyer.id,
@@ -175,10 +177,14 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             state=fields.get("state"),
             submarket=fields.get("submarket"),
             property_type=_to_property_type(fields.get("property_type")),
-            size_sf=size_sf,
+            building_sf=building_sf,
+            lot_sf=fields.get("lot_sf"),
             price=price,
             price_per_sf=price_per_sf,
             cap_rate=fields.get("cap_rate"),
+            num_units=num_units,
+            price_per_unit=price_per_unit,
+            zoning=fields.get("zoning"),
             broker_name=fields.get("broker_name"),
             brokerage=fields.get("brokerage"),
             notes=fields.get("notes"),
@@ -196,11 +202,13 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             state=fields.get("state"),
             submarket=fields.get("submarket"),
             property_type=_to_property_type(fields.get("property_type")),
-            size_sf=fields.get("size_sf"),
+            building_sf=fields.get("building_sf"),
+            lot_sf=fields.get("lot_sf"),
             rate=fields.get("rate"),
             rate_type=fields.get("rate_type"),
             term_months=fields.get("term_months"),
             expense_type=fields.get("expense_type") or "unknown",
+            zoning=fields.get("zoning"),
             broker_name=fields.get("broker_name"),
             brokerage=fields.get("brokerage"),
             notes=fields.get("notes"),
@@ -351,10 +359,14 @@ class SaleCompOut(BaseModel):
     state: str | None
     submarket: str | None
     property_type: str
-    size_sf: float | None
+    building_sf: float | None
+    lot_sf: float | None
     price: float | None
     price_per_sf: float | None
     cap_rate: float | None
+    num_units: float | None
+    price_per_unit: float | None
+    zoning: str | None
     broker_name: str | None
     brokerage: str | None
     date_received: date
@@ -371,11 +383,13 @@ class LeaseCompOut(BaseModel):
     state: str | None
     submarket: str | None
     property_type: str
-    size_sf: float | None
+    building_sf: float | None
+    lot_sf: float | None
     rate: float | None
     rate_type: str | None
     term_months: int | None
     expense_type: str
+    zoning: str | None
     broker_name: str | None
     brokerage: str | None
     date_received: date
@@ -390,6 +404,9 @@ def list_sale_comps(
     property_type: PropertyType | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    zoning: str | None = Query(default=None, description="matches zoning, e.g. industrial"),
+    price_per_unit_min: float | None = Query(default=None, description="multifamily filter"),
+    price_per_unit_max: float | None = Query(default=None, description="multifamily filter"),
     q: str | None = Query(default=None, description="matches address"),
     user: User = Depends(get_current_user),
 ):
@@ -403,6 +420,12 @@ def list_sale_comps(
             stmt = stmt.where(SaleComp.date_received >= date_from)
         if date_to:
             stmt = stmt.where(SaleComp.date_received <= date_to)
+        if zoning:
+            stmt = stmt.where(SaleComp.zoning.ilike(f"%{zoning}%"))
+        if price_per_unit_min is not None:
+            stmt = stmt.where(SaleComp.price_per_unit >= price_per_unit_min)
+        if price_per_unit_max is not None:
+            stmt = stmt.where(SaleComp.price_per_unit <= price_per_unit_max)
         if q:
             stmt = stmt.where(SaleComp.address.ilike(f"%{q}%"))
         stmt = stmt.order_by(SaleComp.date_received.desc())
@@ -415,6 +438,7 @@ def list_lease_comps(
     property_type: PropertyType | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    zoning: str | None = Query(default=None, description="matches zoning, e.g. industrial"),
     q: str | None = Query(default=None, description="matches address"),
     user: User = Depends(get_current_user),
 ):
@@ -428,6 +452,8 @@ def list_lease_comps(
             stmt = stmt.where(LeaseComp.date_received >= date_from)
         if date_to:
             stmt = stmt.where(LeaseComp.date_received <= date_to)
+        if zoning:
+            stmt = stmt.where(LeaseComp.zoning.ilike(f"%{zoning}%"))
         if q:
             stmt = stmt.where(LeaseComp.address.ilike(f"%{q}%"))
         stmt = stmt.order_by(LeaseComp.date_received.desc())
