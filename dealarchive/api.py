@@ -22,6 +22,7 @@ from dealarchive.comparison import ComparisonResult, compare_lease_comp, compare
 from dealarchive.config import settings
 from dealarchive.db import SessionLocal
 from dealarchive.extraction import extract_flyer
+from dealarchive.matching import parse_query, rank_by_residual
 from dealarchive.models import (
     DealType,
     ExtractionStatus,
@@ -490,6 +491,141 @@ def get_lease_comp(comp_id: str, user: User = Depends(get_current_user)):
         if comp is None:
             raise HTTPException(status_code=404, detail="Not found")
         return comp
+
+
+# --------------------------------------------------------------------------
+# Natural-language search ("Ask AI")
+# --------------------------------------------------------------------------
+
+ASK_CANDIDATE_LIMIT = 40
+
+
+class AskRequest(BaseModel):
+    query: str
+
+
+class AskMatch(BaseModel):
+    deal_type: Literal["sale", "lease"]
+    comp: SaleCompOut | LeaseCompOut
+    reason: str | None = None
+
+
+class AskResponse(BaseModel):
+    matches: list[AskMatch]
+    understood: dict
+    residual_criteria: str | None = None
+
+
+def _apply_common_comp_filters(stmt, model, parsed, property_type_enum):
+    if property_type_enum is not None:
+        stmt = stmt.where(model.property_type == property_type_enum)
+    if parsed.submarket:
+        stmt = stmt.where(model.submarket.ilike(f"%{parsed.submarket}%"))
+    if parsed.zoning:
+        stmt = stmt.where(model.zoning.ilike(f"%{parsed.zoning}%"))
+    if parsed.building_sf_min is not None:
+        stmt = stmt.where(model.building_sf >= parsed.building_sf_min)
+    if parsed.building_sf_max is not None:
+        stmt = stmt.where(model.building_sf <= parsed.building_sf_max)
+    if parsed.lot_sf_min is not None:
+        stmt = stmt.where(model.lot_sf >= parsed.lot_sf_min)
+    if parsed.lot_sf_max is not None:
+        stmt = stmt.where(model.lot_sf <= parsed.lot_sf_max)
+    return stmt
+
+
+@app.post("/ask", response_model=AskResponse)
+def ask(body: AskRequest, user: User = Depends(get_current_user)):
+    """Free-text search over the broker's own vault. A query gets parsed
+    into structured filters (fast, deterministic, runs as ordinary SQL)
+    plus optional "residual" criteria that isn't a stored column -- things
+    like clear height or dock doors that only live in a flyer's notes --
+    which gets a second, narrower LLM pass against just the notes of the
+    already-filtered candidates. See dealarchive/matching.py."""
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+
+    try:
+        parsed = parse_query(body.query)
+    except Exception as e:  # noqa: BLE001 -- surfaced to the caller, not silently swallowed
+        raise HTTPException(status_code=502, detail=f"Couldn't understand that search: {e}")
+
+    property_type_enum = None
+    if parsed.property_type:
+        try:
+            property_type_enum = PropertyType(parsed.property_type)
+        except ValueError:
+            property_type_enum = None
+
+    with SessionLocal() as session:
+        tagged: list[tuple[str, SaleComp | LeaseComp]] = []
+
+        if parsed.deal_type in (None, "sale"):
+            stmt = select(SaleComp).where(SaleComp.user_id == user.id)
+            stmt = _apply_common_comp_filters(stmt, SaleComp, parsed, property_type_enum)
+            if parsed.price_per_sf_min is not None:
+                stmt = stmt.where(SaleComp.price_per_sf >= parsed.price_per_sf_min)
+            if parsed.price_per_sf_max is not None:
+                stmt = stmt.where(SaleComp.price_per_sf <= parsed.price_per_sf_max)
+            if parsed.price_per_unit_min is not None:
+                stmt = stmt.where(SaleComp.price_per_unit >= parsed.price_per_unit_min)
+            if parsed.price_per_unit_max is not None:
+                stmt = stmt.where(SaleComp.price_per_unit <= parsed.price_per_unit_max)
+            if parsed.cap_rate_min is not None:
+                stmt = stmt.where(SaleComp.cap_rate >= parsed.cap_rate_min)
+            if parsed.cap_rate_max is not None:
+                stmt = stmt.where(SaleComp.cap_rate <= parsed.cap_rate_max)
+            stmt = stmt.order_by(SaleComp.date_received.desc()).limit(ASK_CANDIDATE_LIMIT)
+            tagged += [("sale", c) for c in session.scalars(stmt).all()]
+
+        if parsed.deal_type in (None, "lease"):
+            stmt = select(LeaseComp).where(LeaseComp.user_id == user.id)
+            stmt = _apply_common_comp_filters(stmt, LeaseComp, parsed, property_type_enum)
+            if parsed.rate_min is not None:
+                stmt = stmt.where(LeaseComp.rate >= parsed.rate_min)
+            if parsed.rate_max is not None:
+                stmt = stmt.where(LeaseComp.rate <= parsed.rate_max)
+            stmt = stmt.order_by(LeaseComp.date_received.desc()).limit(ASK_CANDIDATE_LIMIT)
+            tagged += [("lease", c) for c in session.scalars(stmt).all()]
+
+        if parsed.residual_criteria and tagged:
+            candidate_payload = [
+                {"id": c.id, "address": c.address, "notes": c.notes or ""} for _, c in tagged
+            ]
+            try:
+                ranked = rank_by_residual(parsed.residual_criteria, candidate_payload)
+            except Exception:  # noqa: BLE001 -- fall back to the unranked filter results
+                ranked = []
+            if ranked:
+                reason_by_id = {m.comp_id: m.reason for m in ranked}
+                order = {m.comp_id: i for i, m in enumerate(ranked)}
+                tagged = sorted(
+                    (t for t in tagged if t[1].id in reason_by_id),
+                    key=lambda t: order[t[1].id],
+                )
+            else:
+                reason_by_id = {}
+        else:
+            reason_by_id = {}
+
+        matches = [
+            AskMatch(
+                deal_type=dt,
+                comp=(SaleCompOut if dt == "sale" else LeaseCompOut).model_validate(c),
+                reason=reason_by_id.get(c.id),
+            )
+            for dt, c in tagged
+        ]
+
+        return AskResponse(
+            matches=matches,
+            understood={
+                k: v
+                for k, v in parsed.__dict__.items()
+                if v is not None and k != "residual_criteria"
+            },
+            residual_criteria=parsed.residual_criteria,
+        )
 
 
 @app.get("/flyers/{flyer_id}/file")

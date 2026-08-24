@@ -71,6 +71,18 @@ export interface FlyerResult {
   error: string | null;
 }
 
+export interface AskMatch {
+  deal_type: DealType;
+  comp: SaleComp | LeaseComp;
+  reason: string | null;
+}
+
+export interface AskResponse {
+  matches: AskMatch[];
+  understood: Record<string, unknown>;
+  residual_criteria: string | null;
+}
+
 const TOKEN_KEY = "dealarchive_token";
 
 export function getToken(): string | null {
@@ -139,6 +151,12 @@ export const api = {
     request<LeaseComp[]>(`/lease-comps?${new URLSearchParams(params)}`),
   saleComp: (id: string) => request<SaleComp>(`/sale-comps/${id}`),
   leaseComp: (id: string) => request<LeaseComp>(`/lease-comps/${id}`),
+
+  ask: (query: string) =>
+    request<AskResponse>("/ask", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
 
   async flyerFileBlobUrl(flyerId: string): Promise<string> {
     const token = getToken();
