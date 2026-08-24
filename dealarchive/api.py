@@ -45,6 +45,7 @@ _frontend_bare_host = re.sub(r"^www\.", "", _frontend_host)
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=[settings.frontend_url] if settings.frontend_url.startswith("http://") else [],
     allow_origin_regex=rf"https://(www\.)?{re.escape(_frontend_bare_host)}|https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
