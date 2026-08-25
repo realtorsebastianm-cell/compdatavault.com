@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/lease", label: "Lease" },
   { href: "/ask", label: "Ask_AI" },
   { href: "/value", label: "Value" },
+  { href: "/map", label: "Map" },
   { href: "/alerts", label: "Alerts" },
   { href: "/upload", label: "Upload" },
   { href: "/settings", label: "Settings" },

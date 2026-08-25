@@ -242,6 +242,14 @@ class SaleComp(Base):
         ForeignKey("sale_comps.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Geocoded from address/city/state at ingestion time (best-effort --
+    # see dealarchive/geocoding.py); null until that succeeds. Powers the
+    # map view. A dedicated backfill endpoint (POST /geocode-backfill)
+    # fills these in for comps that predate this column or whose geocode
+    # attempt failed the first time.
+    latitude: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped[User] = relationship(back_populates="sale_comps")
@@ -280,6 +288,9 @@ class LeaseComp(Base):
     duplicate_of_id: Mapped[str | None] = mapped_column(
         ForeignKey("lease_comps.id", ondelete="SET NULL"), nullable=True
     )
+
+    latitude: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Numeric, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

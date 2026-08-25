@@ -26,6 +26,7 @@ from dealarchive.config import settings
 from dealarchive.db import SessionLocal
 from dealarchive.export import build_workbook
 from dealarchive.extraction import extract_flyer
+from dealarchive.geocoding import geocode_address
 from dealarchive.matching import parse_query, rank_by_residual
 from dealarchive.valuation import PropertyProfile, parse_property, rank_for_valuation
 from dealarchive.models import (
@@ -387,6 +388,14 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
     address = fields.get("address") or "Unknown address"
     duplicate = None
 
+    # Best-effort, never blocks flyer processing on failure -- see
+    # dealarchive/geocoding.py.
+    latitude, longitude = (None, None)
+    if address != "Unknown address":
+        geocoded = geocode_address(address, fields.get("city"), fields.get("state"))
+        if geocoded:
+            latitude, longitude = geocoded
+
     if result.deal_type == "sale":
         if address != "Unknown address":
             duplicate = _find_duplicate(session, SaleComp, user.id, address)
@@ -415,6 +424,8 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             brokerage=fields.get("brokerage"),
             notes=fields.get("notes"),
             duplicate_of_id=duplicate.id if duplicate else None,
+            latitude=latitude,
+            longitude=longitude,
         )
         session.add(comp)
         session.flush()
@@ -443,6 +454,8 @@ def _process_flyer(session, user: User, content: bytes, filename: str, content_t
             brokerage=fields.get("brokerage"),
             notes=fields.get("notes"),
             duplicate_of_id=duplicate.id if duplicate else None,
+            latitude=latitude,
+            longitude=longitude,
         )
         session.add(comp)
         session.flush()
@@ -636,6 +649,8 @@ class SaleCompOut(BaseModel):
     date_received: date
     notes: str | None
     duplicate_of_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -660,6 +675,8 @@ class LeaseCompOut(BaseModel):
     date_received: date
     notes: str | None
     duplicate_of_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -790,6 +807,66 @@ def delete_lease_comp(comp_id: str, user: User = Depends(get_current_user)):
         if comp is None:
             raise HTTPException(status_code=404, detail="Not found")
         _delete_comp(session, comp)
+
+
+GEOCODE_BACKFILL_LIMIT = 100
+# The Census geocoder is a synchronous HTTP call per comp with no batch
+# endpoint worth using here, so this runs inline within the request rather
+# than as a background job. Capped per call so a broker with a large vault
+# doesn't trigger a request that times out -- the frontend just calls this
+# again (its button says "geocode more" once there's nothing left in one
+# pass) until nothing's left to backfill.
+
+
+class GeocodeBackfillResponse(BaseModel):
+    geocoded: int
+    failed: int
+    remaining: int
+
+
+@app.post("/geocode-backfill", response_model=GeocodeBackfillResponse)
+def geocode_backfill(user: User = Depends(get_current_user)):
+    """Fills in latitude/longitude for this user's comps that don't have
+    it yet -- comps ingested before the map view existed, or whose
+    geocode attempt failed the first time (a flaky Census API response,
+    an address it couldn't parse, etc)."""
+    with SessionLocal() as session:
+        geocoded = 0
+        failed = 0
+        for model in (SaleComp, LeaseComp):
+            stmt = (
+                select(model)
+                .where(
+                    model.user_id == user.id,
+                    model.latitude.is_(None),
+                    model.address.is_not(None),
+                    model.address != "Unknown address",
+                )
+                .limit(GEOCODE_BACKFILL_LIMIT)
+            )
+            for comp in session.scalars(stmt).all():
+                result = geocode_address(comp.address, comp.city, comp.state)
+                if result:
+                    comp.latitude, comp.longitude = result
+                    geocoded += 1
+                else:
+                    failed += 1
+        session.commit()
+
+        remaining = 0
+        for model in (SaleComp, LeaseComp):
+            remaining += session.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(
+                    model.user_id == user.id,
+                    model.latitude.is_(None),
+                    model.address.is_not(None),
+                    model.address != "Unknown address",
+                )
+            ) or 0
+
+        return GeocodeBackfillResponse(geocoded=geocoded, failed=failed, remaining=remaining)
 
 
 # --------------------------------------------------------------------------

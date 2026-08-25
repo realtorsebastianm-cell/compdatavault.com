@@ -31,6 +31,8 @@ export interface SaleComp {
   date_received: string;
   notes: string | null;
   duplicate_of_id: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export interface LeaseComp {
@@ -53,6 +55,8 @@ export interface LeaseComp {
   date_received: string;
   notes: string | null;
   duplicate_of_id: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export interface ComparisonOut {
@@ -223,6 +227,11 @@ export const api = {
     request<SaleComp[]>(`/sale-comps?${new URLSearchParams(params)}`),
   leaseComps: (params: Record<string, string> = {}) =>
     request<LeaseComp[]>(`/lease-comps?${new URLSearchParams(params)}`),
+  geocodeBackfill: () =>
+    request<{ geocoded: number; failed: number; remaining: number }>(
+      "/geocode-backfill",
+      { method: "POST" }
+    ),
   saleComp: (id: string) => request<SaleComp>(`/sale-comps/${id}`),
   leaseComp: (id: string) => request<LeaseComp>(`/lease-comps/${id}`),
   deleteSaleComp: (id: string) =>
