@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Lora } from "next/font/google";
 import "./globals.css";
+import Link from "next/link";
 import { AuthProvider } from "@/lib/auth";
 import Nav from "@/components/Nav";
 
@@ -28,6 +29,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <AuthProvider>
           <Nav />
           <main className="flex-1">{children}</main>
+          <footer className="border-t border-line py-6 text-center text-xs text-dim">
+            <Link href="/terms" className="hover:text-foreground">
+              Terms_of_Service
+            </Link>
+            <span className="mx-2">&middot;</span>
+            <Link href="/privacy" className="hover:text-foreground">
+              Privacy_Policy
+            </Link>
+          </footer>
         </AuthProvider>
       </body>
     </html>
